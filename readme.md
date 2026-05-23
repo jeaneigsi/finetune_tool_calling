@@ -825,6 +825,74 @@ runs/qwen35_4b_tool_sft_v1/
 
 ---
 
+## Model export & deployment
+
+The training script supports 4 export modes. All are optional and can be combined.
+
+### Export modes
+
+```bash
+# 1. LoRA adapter (always saved — use directly with vLLM)
+# → runs/qwen35_tool_sft/adapter/
+
+# 2. Float16 merged model (for vLLM / SGLang)
+python train_qwen35_tool_sft.py ... --export-merged
+# → runs/qwen35_tool_sft/merged/
+
+# 3. GGUF quantized (for llama.cpp / Ollama)
+python train_qwen35_tool_sft.py ... --export-gguf q4_k_m
+# → runs/qwen35_tool_sft/merged/ + runs/qwen35_tool_sft/gguf/
+
+# 4. HuggingFace Hub (1-click deploy)
+python train_qwen35_tool_sft.py ... \
+  --push-to-hub moncrolio/jbujb-qwen-tool-sft \
+  --hf-token hf_xxx
+# → https://huggingface.co/moncrolio/jbujb-qwen-tool-sft
+```
+
+### Supported quant methods (for --export-gguf)
+
+| Method | Description |
+|--------|-------------|
+| `q8_0` | Fast conversion, high resource use, generally acceptable |
+| `q4_k_m` | **Recommended.** Q6_K for half of attn.wv/feed_forward.w2, else Q4_K |
+| `q5_k_m` | Q6_K for half of attn.wv/feed_forward.w2, else Q5_K |
+| `f16` | No quantization, full float16 |
+
+### Deployment recipes
+
+**vLLM with LoRA adapter (recommended — no merge needed):**
+```bash
+vllm serve unsloth/Qwen3.5-4B \
+  --enable-lora \
+  --lora-modules jbujb=runs/qwen35_tool_sft/adapter
+```
+
+**vLLM with merged model:**
+```bash
+vllm serve runs/qwen35_tool_sft/merged
+```
+
+**SGLang:**
+```bash
+python -m sglang.launch_server \
+  --model unsloth/Qwen3.5-4B \
+  --lora-paths runs/qwen35_tool_sft/adapter
+```
+
+**Ollama (via GGUF):**
+```bash
+echo "FROM ./runs/qwen35_tool_sft/gguf/model-Q4_K_M.gguf" > Modelfile
+ollama create jbujb-qwen-tool -f Modelfile
+ollama run jbujb-qwen-tool
+```
+
+**No custom parser needed.** vLLM, SGLang, and Ollama handle Qwen's native tool-calling
+format (`<tool_call>...</tool_call>`) automatically. The XML parser in `normalize_prediction()`
+is only for offline evaluation.
+
+---
+
 ## ClearML observability
 
 ClearML is used to track experiments.
