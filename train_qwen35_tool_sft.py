@@ -508,8 +508,8 @@ def main() -> None:
     ap.add_argument("--load-in-4bit", action="store_true", help="QLoRA mode. Not recommended by Unsloth for Qwen3.5; use only if VRAM forces it.")
     ap.add_argument("--load-in-8bit", action="store_true")
     ap.add_argument("--dtype", default="bf16", choices=["bf16", "fp16", "auto"])
-    ap.add_argument("--lora-r", type=int, default=64)
-    ap.add_argument("--lora-alpha", type=int, default=128)
+    ap.add_argument("--lora-r", type=int, default=32)
+    ap.add_argument("--lora-alpha", type=int, default=64)
     ap.add_argument("--lora-dropout", type=float, default=0.0)
     ap.add_argument("--batch-size", type=int, default=2)
     ap.add_argument("--grad-accum", type=int, default=8)
@@ -519,10 +519,13 @@ def main() -> None:
     ap.add_argument("--warmup-ratio", type=float, default=0.03)
     ap.add_argument("--weight-decay", type=float, default=0.01)
     ap.add_argument("--logging-steps", type=int, default=5)
-    ap.add_argument("--eval-steps", type=int, default=100)
-    ap.add_argument("--save-steps", type=int, default=100)
+    ap.add_argument("--eval-steps", type=int, default=200)
+    ap.add_argument("--save-steps", type=int, default=200)
     ap.add_argument("--baseline-limit", type=int, default=100)
     ap.add_argument("--eval-max-new-tokens", type=int, default=512)
+    ap.add_argument("--eval-workers", type=int, default=2, help="Num workers for eval dataset tokenization")
+    ap.add_argument("--skip-baseline", action="store_true", help="Skip the baseline evaluation run")
+    ap.add_argument("--attn-implementation", default="flash_attention_2", choices=["flash_attention_2", "sdpa", "eager"])
     ap.add_argument("--report-to", default="tensorboard", choices=["none", "tensorboard", "clearml", "wandb", "mlflow"])
     ap.add_argument("--clearml-project", default="JBUJB-Qwen35-ToolSFT")
     ap.add_argument("--clearml-task", default=None)
@@ -560,22 +563,27 @@ def main() -> None:
         load_in_4bit=args.load_in_4bit,
         load_in_8bit=args.load_in_8bit,
         full_finetuning=False,
+        attn_implementation=args.attn_implementation,
     )
     tokenizer = getattr(processor_or_tokenizer, "tokenizer", processor_or_tokenizer)
 
     print("Running baseline eval BEFORE dataset text formatting/training...")
-    baseline_report = evaluate_model(
-        model=model,
-        tokenizer=tokenizer,
-        rows=val_rows,
-        tools=tools,
-        out_dir=eval_dir,
-        name="baseline_validation_raw",
-        limit=args.baseline_limit,
-        max_new_tokens=args.eval_max_new_tokens,
-    )
-    if args.report_to == "clearml":
-        log_to_clearml(baseline_report, prefix="baseline")
+    if not args.skip_baseline:
+        baseline_report = evaluate_model(
+            model=model,
+            tokenizer=tokenizer,
+            rows=val_rows,
+            tools=tools,
+            out_dir=eval_dir,
+            name="baseline_validation_raw",
+            limit=args.baseline_limit,
+            max_new_tokens=args.eval_max_new_tokens,
+        )
+        if args.report_to == "clearml":
+            log_to_clearml(baseline_report, prefix="baseline")
+    else:
+        baseline_report = {"json_validity": 0, "tool_accuracy": 0, "exact_action_accuracy": 0, "hallucinated_id_rate": 0}
+        print("Skipped baseline eval.")
 
     print("Preparing text datasets...")
     train_ds = build_text_dataset(train_rows, tokenizer, tools, max_chars=None)
@@ -620,6 +628,9 @@ def main() -> None:
         fp16=(args.dtype == "fp16" and torch.cuda.is_available()),
         report_to=report_to,
         run_name=Path(args.output_dir).name,
+        packing=True,
+        dataset_num_proc=4,
+        dataloader_num_workers=2,
     )
 
     config_snapshot = vars(args) | {"tools_count": len(tools), "baseline_report": baseline_report}
