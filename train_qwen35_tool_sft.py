@@ -546,7 +546,8 @@ def main() -> None:
     ap.add_argument("--eval-workers", type=int, default=2, help="Num workers for eval dataset tokenization")
     ap.add_argument("--skip-baseline", action="store_true", help="Skip the baseline evaluation run")
     ap.add_argument("--attn-implementation", default="flash_attention_2", choices=["flash_attention_2", "sdpa", "eager"])
-    ap.add_argument("--export-gguf", default=None, help="Export merged model to GGUF (e.g. q4_k_m, q8_0, f16)")
+    ap.add_argument("--export-gguf", default=None, help="Export to GGUF via unsloth (e.g. q4_k_m, q8_0, f16)")
+    ap.add_argument("--export-merged", action="store_true", help="Export merged 16bit model for vLLM deployment")
     ap.add_argument("--report-to", default="tensorboard", choices=["none", "tensorboard", "clearml", "wandb", "mlflow"])
     ap.add_argument("--clearml-project", default="JBUJB-Qwen35-ToolSFT")
     ap.add_argument("--clearml-task", default=None)
@@ -672,13 +673,19 @@ def main() -> None:
     tokenizer.save_pretrained(str(adapter_dir))
     print(f"Saved LoRA adapter to {adapter_dir}")
 
-    # ── Optional GGUF export ──
+    # ── Optional merged model export (for vLLM / SGLang) ──
+    if args.export_merged or args.export_gguf:
+        merged_dir = out_dir / "merged"
+        print(f"Merging LoRA into 16bit model at {merged_dir}...")
+        model.save_pretrained_merged(str(merged_dir), tokenizer, save_method="merged_16bit")
+        print(f"Merged model saved to {merged_dir}")
+
+    # ── Optional GGUF export (for llama.cpp / Ollama) ──
     if args.export_gguf:
         gguf_dir = out_dir / "gguf"
         gguf_dir.mkdir(parents=True, exist_ok=True)
         print(f"Exporting GGUF ({args.export_gguf}) to {gguf_dir}...")
         try:
-            model.save_pretrained_merged(str(out_dir / "merged"), tokenizer, save_method="merged_16bit")
             from unsloth import save_pretrained_gguf
             save_pretrained_gguf(str(out_dir / "merged"), tokenizer, quantization_method=args.export_gguf)
             print(f"GGUF exported to {gguf_dir}")
