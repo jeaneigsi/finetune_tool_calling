@@ -23,6 +23,8 @@ Expected JSONL row:
   "metadata": {...}
 }
 
+"""
+
 from __future__ import annotations
 
 try:
@@ -135,7 +137,7 @@ def load_tool_registry(path: Optional[str]) -> List[dict]:
         return [x for x in (_normalize_tool(t) for t in tools) if x]
 
     # Markdown fallback: extract JSON code blocks or raw JSON arrays.
-    blocks = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.S | re.I)
+    blocks = re.findall(r"```(?:json)?\\s*(.*?)```", text, flags=re.S | re.I)
     candidates = blocks + [text]
     extracted: List[dict] = []
     for c in candidates:
