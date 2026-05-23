@@ -705,22 +705,85 @@ Example command:
 ```bash
 python train_qwen35_tool_sft.py \
   --model unsloth/Qwen3.5-4B \
-  --train outputs/splits/train.jsonl \
-  --validation outputs/splits/validation.jsonl \
-  --test outputs/splits/test.jsonl \
+  --train data/train.jsonl \
+  --validation data/validation.jsonl \
+  --test data/evaluation.jsonl \
   --tool-registry data/tool_registry.json \
-  --output-dir runs/qwen35_4b_tool_sft_v1 \
-  --max-seq-length 4096 \
+  --output-dir runs/qwen35_4b_tool_sft_v2 \
+  --max-seq-length 2048 \
   --dtype bf16 \
-  --lora-r 64 \
-  --lora-alpha 128 \
-  --batch-size 8 \
-  --grad-accum 2 \
-  --epochs 1 \
-  --lr 2e-5 \
+  --lora-r 32 \
+  --lora-alpha 64 \
+  --batch-size 2 \
+  --grad-accum 4 \
+  --epochs 3 \
+  --lr 5e-5 \
+  --attn-implementation flash_attention_2 \
   --baseline-limit 100 \
+  --report-to clearml \
+  --clearml-project "JBUJB-Qwen35-ToolSFT"
+```
+
+**Fast iteration (skip baseline, focus on training):**
+
+```bash
+python train_qwen35_tool_sft.py \
+  --train data/train.jsonl \
+  --validation data/validation.jsonl \
+  --tool-registry data/tool_registry.json \
+  --output-dir runs/qwen35_4b_tool_sft_v2 \
+  --dtype bf16 \
+  --batch-size 2 --grad-accum 4 --epochs 3 --lr 5e-5 \
+  --skip-baseline \
   --report-to clearml
 ```
+
+### All CLI flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model` | `unsloth/Qwen3.5-4B` | Base model |
+| `--train` | *(required)* | Training JSONL |
+| `--validation` | *(required)* | Validation JSONL |
+| `--test` | `None` | Test JSONL (optional) |
+| `--tool-registry` | `None` | Tool registry JSON file |
+| `--output-dir` | `runs/qwen35_tool_sft` | Output directory |
+| `--max-seq-length` | `2048` | Max sequence length |
+| `--load-in-4bit` | `False` | QLoRA mode (not recommended for Qwen3.5) |
+| `--load-in-8bit` | `False` | 8-bit mode |
+| `--dtype` | `bf16` | `bf16`, `fp16`, or `auto` |
+| `--lora-r` | `32` | LoRA rank |
+| `--lora-alpha` | `64` | LoRA alpha |
+| `--lora-dropout` | `0.0` | LoRA dropout |
+| `--batch-size` | `2` | Per-device batch size |
+| `--grad-accum` | `8` | Gradient accumulation steps |
+| `--epochs` | `1.0` | Training epochs |
+| `--max-steps` | `-1` | Max steps (-1 = auto) |
+| `--lr` | `2e-5` | Learning rate |
+| `--warmup-ratio` | `0.03` | Warmup ratio |
+| `--weight-decay` | `0.01` | Weight decay |
+| `--logging-steps` | `5` | Log every N steps |
+| `--eval-steps` | `200` | Evaluate every N steps |
+| `--save-steps` | `200` | Save checkpoint every N steps |
+| `--baseline-limit` | `100` | Max eval examples for baseline |
+| `--eval-max-new-tokens` | `512` | Max new tokens during eval |
+| `--eval-workers` | `2` | Workers for eval tokenization |
+| `--skip-baseline` | `False` | Skip baseline evaluation (faster iterations) |
+| `--attn-implementation` | `flash_attention_2` | `flash_attention_2`, `sdpa`, `eager` |
+| `--report-to` | `tensorboard` | `none`, `tensorboard`, `clearml`, `wandb`, `mlflow` |
+| `--clearml-project` | `JBUJB-Qwen35-ToolSFT` | ClearML project name |
+| `--clearml-task` | `None` | ClearML task name (auto-generated if None) |
+| `--seed` | `3407` | Random seed |
+
+### Speed optimizations (no quality impact)
+
+| Flag | Effect | Speedup |
+|------|--------|---------|
+| `--attn-implementation flash_attention_2` | Fused attention kernel | 1.5-2x |
+| `--lora-r 32 --lora-alpha 64` | Fewer trainable params | ~2x faster forward/backward |
+| `--skip-baseline` | Skip pre-training eval | Saves ~10 min |
+| `packing=True` (built-in) | Merge short examples | 20-40% less padding |
+| `dataset_num_proc=4` (built-in) | Parallel tokenization | 4x faster prep |
 
 ---
 
@@ -764,49 +827,53 @@ runs/qwen35_4b_tool_sft_v1/
 
 ClearML is used to track experiments.
 
-It should display classic training metrics:
+**Default training metrics** (via SFTConfig):
 
 ```text
-train_loss
-eval_loss
-learning_rate
-grad_norm
-epoch
-global_step
-runtime
-samples_per_second
-steps_per_second
+train/loss
+eval/loss
+train/learning_rate
+train/grad_norm
+train/epoch
+train/global_step
+train/runtime
+train/samples_per_second
+train/steps_per_second
 ```
 
-It should also track custom tool-calling metrics:
+**Custom tool-calling metrics** (logged automatically when `--report-to clearml`):
 
 ```text
 baseline_json_validity
 baseline_tool_accuracy
-baseline_required_args_accuracy
+baseline_exact_action_accuracy
 baseline_hallucinated_id_rate
-baseline_confirmation_policy_accuracy
 
-post_sft_json_validity
-post_sft_tool_accuracy
-post_sft_required_args_accuracy
-post_sft_hallucinated_id_rate
-post_sft_confirmation_policy_accuracy
+sft_json_validity
+sft_tool_accuracy
+sft_exact_action_accuracy
+sft_hallucinated_id_rate
+
+delta_sft_vs_baseline/
+├── json_validity
+├── tool_accuracy
+├── exact_action_accuracy
+└── hallucinated_id_rate
+
+by_pattern/                          # Per workflow pattern
+├── full_purchase/tool_accuracy
+├── ordering_from_search/json_validity
+├── dish_details/exact_action_accuracy
+└── ...
 ```
 
-The most important metrics are:
+**Console progress during evaluation:**
 
-```text
-tool_accuracy
-required_args_accuracy
-hallucinated_id_rate
-confirmation_policy_accuracy
-exact_action_accuracy
 ```
-
-The loss alone is not enough.
-
-A model with low loss can still be unsafe if it creates orders without confirmation or invents IDs.
+[baseline_validation_raw] 1/50 | json=100% tool=100% | 2.3s/step | ETA 113s
+[baseline_validation_raw] 25/50 | json=72% tool=48% | 2.1s/step | ETA 52s
+[baseline_validation_raw] 50/50 | json=68% tool=44% | 2.0s/step | ETA 0s
+```
 
 ---
 
