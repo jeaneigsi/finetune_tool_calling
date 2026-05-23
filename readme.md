@@ -694,8 +694,10 @@ Recommended GPU:
 RTX 4090 24 GB
 RTX A6000 48 GB
 RTX 6000 Ada 48 GB
-RTX PRO 6000 Blackwell 96 GB
+RTX PRO 6000 Blackwell 96 GB  ← best option (96 GB, FP4/FP6/FP8 support)
 L40S 48 GB
+A100 80 GB
+H100 80 GB
 ```
 
 For a powerful GPU with enough VRAM, use bf16 LoRA.
@@ -1002,23 +1004,63 @@ while the dataset uses normal text messages:
 
 ---
 
-### Flash Attention
+## Flash Attention 2 installation
 
-Flash Attention is useful for speed, especially with long contexts.
+Flash Attention 2 provides 1.5-2x training speedup with zero quality impact. It fuses
+the attention computation into a single CUDA kernel, reducing GPU memory I/O.
 
-However, it is optional.
+### Prerequisites
 
-If Flash Attention is not installed or fails to compile, Unsloth can fall back to Xformers.
+- **CUDA >= 12.0** (check: `nvcc --version` or `nvidia-smi`)
+- **PyTorch >= 2.2** (check: `python -c "import torch; print(torch.__version__)"`)
+- **GPU**: Ampere, Ada, Blackwell, or Hopper (RTX 3090, RTX 4090, RTX PRO 6000, A100, A10G, L40S, H100, B200)
+  - ❌ NOT supported: T4, RTX 2080 (Turing) — falls back to `sdpa` or `eager`
+- **RAM**: >= 32 GB recommended for compilation (set `MAX_JOBS=4` if less)
 
-Typical message:
+### Quick install (pre-compiled wheel)
 
-```text
-Flash Attention 2 installation seems to be broken. Using Xformers instead.
+```bash
+pip install flash-attn --no-build-isolation
 ```
 
-This is not blocking.
+### Compile from source (if pre-compiled fails)
 
-For the current training objective, correctness matters more than squeezing maximum speed from the first run.
+```bash
+# Limit parallel jobs to avoid OOM on low-RAM machines
+MAX_JOBS=4 pip install flash-attn --no-build-isolation
+```
+
+### Verify installation
+
+```bash
+python -c "from flash_attn import flash_attn_func; print('Flash Attention 2 OK')"
+```
+
+### Common issues
+
+| Symptom | Fix |
+|---------|-----|
+| `pip install` hangs or takes >30 min | Install `ninja`: `pip install ninja` |
+| `out of memory` during compilation | `MAX_JOBS=2 pip install flash-attn --no-build-isolation` |
+| `CUDA version mismatch` | Match PyTorch CUDA to system CUDA: `pip install torch --index-url https://download.pytorch.org/whl/cu121` |
+| `GPU not supported` (T4, RTX 2080) | Use `--attn-implementation sdpa` instead |
+| `undefined symbol` at import | Rebuild: `pip uninstall flash-attn -y && MAX_JOBS=4 pip install flash-attn --no-build-isolation` |
+| `ninja --version` exits with error | `pip uninstall ninja -y && pip install ninja` |
+
+### Fallback options
+
+If Flash Attention 2 cannot be installed, the training script falls back gracefully:
+
+```bash
+# Option 1: PyTorch's built-in scaled dot product attention (good, ~20% slower)
+--attn-implementation sdpa
+
+# Option 2: Standard eager attention (slowest, most compatible)
+--attn-implementation eager
+```
+
+The script auto-detects flash-attn availability at startup and logs a warning
+if it's not found, continuing with the fallback implementation.
 
 ---
 
