@@ -702,6 +702,15 @@ def main() -> None:
         else:
             print(f"Pushing merged model to {args.push_to_hub}...")
             try:
+                # Push LoRA adapter
+                model.push_to_hub(
+                    f"{args.push_to_hub}-lora",
+                    tokenizer=tokenizer,
+                    token=token,
+                    private=False,
+                )
+                print(f"LoRA adapter pushed to https://huggingface.co/{args.push_to_hub}-lora")
+                # Push merged model  
                 model.push_to_hub_merged(
                     args.push_to_hub,
                     tokenizer,

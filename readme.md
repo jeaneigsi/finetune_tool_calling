@@ -843,11 +843,12 @@ python train_qwen35_tool_sft.py ... --export-merged
 python train_qwen35_tool_sft.py ... --export-gguf q4_k_m
 # → runs/qwen35_tool_sft/merged/ + runs/qwen35_tool_sft/gguf/
 
-# 4. HuggingFace Hub (1-click deploy)
+# 4. HuggingFace Hub (1-click deploy — pushes both LoRA adapter + merged model)
 python train_qwen35_tool_sft.py ... \
   --push-to-hub moncrolio/jbujb-qwen-tool-sft \
   --hf-token hf_xxx
-# → https://huggingface.co/moncrolio/jbujb-qwen-tool-sft
+# → https://huggingface.co/moncrolio/jbujb-qwen-tool-sft-lora   (LoRA adapter, <100MB)
+# → https://huggingface.co/moncrolio/jbujb-qwen-tool-sft        (merged 16bit, ~9GB)
 ```
 
 ### Supported quant methods (for --export-gguf)
