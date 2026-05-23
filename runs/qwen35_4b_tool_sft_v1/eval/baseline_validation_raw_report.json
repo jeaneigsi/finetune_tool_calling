@@ -1,0 +1,64 @@
+{
+  "name": "baseline_validation_raw",
+  "total": 100,
+  "latency_sec": 587.424,
+  "json_validity": 0.05,
+  "type_accuracy": 0.03,
+  "tool_accuracy": 0.0,
+  "required_args_accuracy": 0.0,
+  "exact_args_accuracy": 0.0,
+  "unknown_tool_rate": 0.01,
+  "hallucinated_id_rate": 0.0,
+  "exact_action_accuracy": 0.03,
+  "by_workflow_pattern": {
+    "pre_order_validation": {
+      "total": 3
+    },
+    "clarification_required": {
+      "total": 2
+    },
+    "refusal_or_blocked": {
+      "total": 3
+    },
+    "restaurant_details_by_name": {
+      "total": 3
+    },
+    "dish_details": {
+      "total": 9
+    },
+    "discovery_only": {
+      "total": 7
+    },
+    "ordering_from_search": {
+      "total": 14,
+      "json_valid": 0.21428571428571427,
+      "type_match": 0.07142857142857142,
+      "exact_action_match": 0.07142857142857142,
+      "unknown_tool": 0.07142857142857142
+    },
+    "full_purchase": {
+      "total": 20
+    },
+    "cart_management": {
+      "total": 6
+    },
+    "menu_browsing": {
+      "total": 3
+    },
+    "ordering_from_menu": {
+      "total": 20,
+      "json_valid": 0.1,
+      "type_match": 0.1,
+      "exact_action_match": 0.1
+    },
+    "restaurant_browse_by_criteria": {
+      "total": 3
+    },
+    "multi_intent": {
+      "total": 5
+    },
+    "nearby_discovery": {
+      "total": 2
+    }
+  }
+}

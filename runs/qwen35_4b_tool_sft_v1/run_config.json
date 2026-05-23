@@ -1,0 +1,96 @@
+{
+  "model": "unsloth/Qwen3.5-4B",
+  "train": "data/train.jsonl",
+  "validation": "data/validation.jsonl",
+  "test": "data/evaluation.jsonl",
+  "tool_registry": "data/tool_registry.json",
+  "output_dir": "runs/qwen35_4b_tool_sft_v1",
+  "max_seq_length": 8912,
+  "load_in_4bit": false,
+  "load_in_8bit": false,
+  "dtype": "bf16",
+  "lora_r": 64,
+  "lora_alpha": 128,
+  "lora_dropout": 0.0,
+  "batch_size": 8,
+  "grad_accum": 8,
+  "epochs": 1.0,
+  "max_steps": -1,
+  "lr": 2e-05,
+  "warmup_ratio": 0.03,
+  "weight_decay": 0.01,
+  "logging_steps": 5,
+  "eval_steps": 100,
+  "save_steps": 100,
+  "baseline_limit": 100,
+  "eval_max_new_tokens": 512,
+  "report_to": "clearml",
+  "clearml_project": "JBUJB-Qwen35-ToolSFT",
+  "clearml_task": null,
+  "seed": 3407,
+  "tools_count": 23,
+  "baseline_report": {
+    "name": "baseline_validation_raw",
+    "total": 100,
+    "latency_sec": 587.424,
+    "json_validity": 0.05,
+    "type_accuracy": 0.03,
+    "tool_accuracy": 0.0,
+    "required_args_accuracy": 0.0,
+    "exact_args_accuracy": 0.0,
+    "unknown_tool_rate": 0.01,
+    "hallucinated_id_rate": 0.0,
+    "exact_action_accuracy": 0.03,
+    "by_workflow_pattern": {
+      "pre_order_validation": {
+        "total": 3
+      },
+      "clarification_required": {
+        "total": 2
+      },
+      "refusal_or_blocked": {
+        "total": 3
+      },
+      "restaurant_details_by_name": {
+        "total": 3
+      },
+      "dish_details": {
+        "total": 9
+      },
+      "discovery_only": {
+        "total": 7
+      },
+      "ordering_from_search": {
+        "total": 14,
+        "json_valid": 0.21428571428571427,
+        "type_match": 0.07142857142857142,
+        "exact_action_match": 0.07142857142857142,
+        "unknown_tool": 0.07142857142857142
+      },
+      "full_purchase": {
+        "total": 20
+      },
+      "cart_management": {
+        "total": 6
+      },
+      "menu_browsing": {
+        "total": 3
+      },
+      "ordering_from_menu": {
+        "total": 20,
+        "json_valid": 0.1,
+        "type_match": 0.1,
+        "exact_action_match": 0.1
+      },
+      "restaurant_browse_by_criteria": {
+        "total": 3
+      },
+      "multi_intent": {
+        "total": 5
+      },
+      "nearby_discovery": {
+        "total": 2
+      }
+    }
+  }
+}

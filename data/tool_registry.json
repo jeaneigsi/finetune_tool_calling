@@ -1,0 +1,621 @@
+{
+  "version": 2,
+  "generated": "2026-05-23",
+  "description": "JBUJB tool registry — OpenAI function-calling format with evaluation metadata. Source of truth for tool validity, argument schemas, and safety rules during fine-tuning and evaluation.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "search_context",
+        "description": "Broad discovery tool for ambiguous food requests. Embed the query, search menu items, merchants, and campaigns in parallel, then follow exact IDs into detail or order tools.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string", "description": "Free-text food or restaurant concept from user."},
+            "language": {"type": "string", "description": "ISO language code (fr, en, ar). Default: fr."},
+            "lat": {"type": "number", "description": "User latitude for geo-scoping, from session context."},
+            "lon": {"type": "number", "description": "User longitude for geo-scoping, from session context."}
+          },
+          "required": ["query"]
+        }
+      },
+      "metadata": {
+        "family": "DISCOVERY",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["product_id", "merchant_id", "business_id", "score"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "search_food",
+        "description": "Search for specific dishes by name or concept (e.g. 'tacos poulet', 'sushi pas cher'). Returns matching dishes with prices and restaurant info. Do NOT use for listing a full restaurant menu — use get_restaurant_menu instead.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string", "description": "What the user wants to eat."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."},
+            "limit": {"type": "integer", "description": "Max results. Default: 5."},
+            "page": {"type": "integer", "description": "Page number. Default: 1."},
+            "business_id": {"type": "string", "description": "Optional: narrow to one merchant. Must come from resolve_restaurant or search_restaurants output."},
+            "product_type": {"type": "string", "description": "Optional: filter by category (e.g. dessert, boisson)."},
+            "shared": {"type": "boolean", "description": "Optional: filter shared products only."}
+          },
+          "required": ["query"]
+        }
+      },
+      "metadata": {
+        "family": "DISCOVERY",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["product_id", "merchant_id", "merchant_name", "price", "diet_tags", "image_url"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "search_restaurants",
+        "description": "Search for restaurants by cuisine, location, budget, opening status. Returns restaurant list with ratings. Do NOT use for resolving a named restaurant — use resolve_restaurant instead.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string", "description": "Cuisine type or restaurant name from user."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."},
+            "lat": {"type": "number", "description": "Latitude (from session or user). Required unless city context exists."},
+            "lon": {"type": "number", "description": "Longitude (from session or user). Required unless city context exists."},
+            "limit": {"type": "integer", "description": "Max results. Default: 5."},
+            "page": {"type": "integer", "description": "Page number. Default: 1."},
+            "sort_by": {"type": "string", "description": "Sort order. Default: distance."},
+            "open_now": {"type": "boolean", "description": "Filter only currently open restaurants."},
+            "business_type_id": {"type": "string", "description": "Cuisine type ID filter."},
+            "business_sub_type_id": {"type": "string", "description": "Sub-cuisine ID filter."},
+            "is_verified": {"type": "boolean", "description": "Verified merchants only."},
+            "is_dine_in": {"type": "boolean", "description": "Dine-in available filter."},
+            "is_pick_up": {"type": "boolean", "description": "Pick-up available filter."},
+            "is_delivery": {"type": "boolean", "description": "Delivery available filter."},
+            "min_price": {"type": "number", "description": "Minimum price filter in MAD."},
+            "max_price": {"type": "number", "description": "Maximum price filter in MAD."},
+            "offer": {"type": "boolean", "description": "Has active promo/offer filter."},
+            "country": {"type": "string", "description": "Country code filter."},
+            "distance": {"type": "number", "description": "Radius in meters. Default: 500."},
+            "filters": {"type": "array", "items": {"type": "string"}, "description": "Extra tag filters."},
+            "status": {"type": "string", "description": "Merchant status. Default: active."}
+          },
+          "required": ["query"]
+        }
+      },
+      "metadata": {
+        "family": "DISCOVERY",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["business_id", "name", "rating", "cuisine", "delivery_zone", "logo_url"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "resolve_restaurant",
+        "description": "MANDATORY FIRST STEP for menu/details queries. Resolve a free-form restaurant name to exact business_id. Use its output as input to get_restaurant_menu or get_restaurant_details. Do NOT guess IDs — always resolve the name first.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string", "description": "Raw restaurant name from user utterance."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."},
+            "city": {"type": "string", "description": "Optional city hint to disambiguate (from user or session)."},
+            "lat": {"type": "number", "description": "Latitude for geo-scoping, from session context."},
+            "lon": {"type": "number", "description": "Longitude for geo-scoping, from session context."},
+            "limit": {"type": "integer", "description": "Max candidates. Default: 5."}
+          },
+          "required": ["name"]
+        }
+      },
+      "metadata": {
+        "family": ["DISCOVERY", "DETAILS"],
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["business_id", "business_name", "confidence", "candidates"],
+        "produces_key": "business_id"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "search_all",
+        "description": "Unified search across dishes AND restaurants. Use when the query spans both (e.g. 'tacos near me' or 'good Italian food'). Returns grouped results by type.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {"type": "string", "description": "Free-text search from user."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."},
+            "lat": {"type": "number", "description": "Latitude for geo-scoping."},
+            "lon": {"type": "number", "description": "Longitude for geo-scoping."},
+            "limit": {"type": "integer", "description": "Max per category. Default: 5."},
+            "page": {"type": "integer", "description": "Page number. Default: 1."},
+            "sort_by": {"type": "string", "description": "Sort order. Default: distance."},
+            "open_now": {"type": "boolean", "description": "Only open now."},
+            "is_verified": {"type": "boolean", "description": "Verified only."},
+            "is_dine_in": {"type": "boolean", "description": "Dine-in filter."},
+            "is_pick_up": {"type": "boolean", "description": "Pick-up filter."},
+            "is_delivery": {"type": "boolean", "description": "Delivery filter."},
+            "min_price": {"type": "number", "description": "Min price in MAD."},
+            "max_price": {"type": "number", "description": "Max price in MAD."},
+            "offer": {"type": "boolean", "description": "Has active offer."},
+            "distance": {"type": "number", "description": "Radius in meters. Default: 500."},
+            "business_id": {"type": "string", "description": "Optional: narrow to one merchant."},
+            "product_type": {"type": "string", "description": "Dish category filter."},
+            "shared": {"type": "boolean", "description": "Shared products only."}
+          },
+          "required": ["query"]
+        }
+      },
+      "metadata": {
+        "family": "DISCOVERY",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["product_id", "merchant_id", "business_id"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_promotions",
+        "description": "Get active promotions and deals. Optionally filter by merchant or search text. Returns discount value and type.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "merchant_id": {"type": "string", "description": "Optional: filter by merchant. Must come from resolve_restaurant or search_restaurants output. Alias: business_id."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."},
+            "page": {"type": "integer", "description": "Page. Default: 1."},
+            "limit": {"type": "integer", "description": "Max results. Default: 5."},
+            "search": {"type": "string", "description": "Optional: text search within promos."},
+            "status": {"type": "string", "description": "Campaign status. Default: active."},
+            "is_public": {"type": "boolean", "description": "Public campaigns only."}
+          },
+          "required": []
+        }
+      },
+      "metadata": {
+        "family": "DISCOVERY",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["campaign_id", "name", "discount_value", "discount_type"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "find_nearby",
+        "description": "Find restaurants near a geographic location (lat/lon). Use when user asks for 'near me' or gives GPS coordinates. Returns restaurants sorted by distance.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "lat": {"type": "number", "description": "Latitude (from session or user). REQUIRED."},
+            "lon": {"type": "number", "description": "Longitude (from session or user). REQUIRED."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["lat", "lon"]
+        }
+      },
+      "metadata": {
+        "family": "DISCOVERY",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["business_id", "name", "rating", "distance"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_product",
+        "description": "Get raw product details by exact product_id. Use for quick lookups. Use ONLY with IDs from search_food, search_all, or get_restaurant_menu. Do NOT guess IDs.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "product_id": {"type": "string", "description": "Exact product ID from a prior search or menu result."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["product_id"]
+        }
+      },
+      "metadata": {
+        "family": "DETAILS",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["product_id", "product_name", "price", "description", "merchant_id", "allergens", "diet_tags", "is_active"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_food_details",
+        "description": "Complete dish details: price, allergens, ingredients, restaurant info, image, active promotions. Use ONLY with exact product_id from search results. Do NOT guess IDs.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "product_id": {"type": "string", "description": "Exact product ID from search_food, search_all, or get_restaurant_menu result."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["product_id"]
+        }
+      },
+      "metadata": {
+        "family": "DETAILS",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["product_id", "name", "price", "description", "merchant_id", "restaurant", "allergens", "diet_tags", "ingredients", "image_url", "promotions"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_merchant",
+        "description": "Get basic merchant details by exact business_id. Use ONLY with IDs from search_restaurants, resolve_restaurant, or find_nearby. Do NOT guess IDs.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "merchant_id": {"type": "string", "description": "Exact business ID from resolve_restaurant or search_restaurants result."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["merchant_id"]
+        }
+      },
+      "metadata": {
+        "family": "DETAILS",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["business_id", "business_name", "rating", "cuisine_tags", "address", "delivery_zone", "is_delivery", "price_range", "phone", "logo_url", "business_hours"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_merchant_hours",
+        "description": "Get business hours for a merchant by exact business_id.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "merchant_id": {"type": "string", "description": "Exact business ID from resolve_restaurant output."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["merchant_id"]
+        }
+      },
+      "metadata": {
+        "family": "DETAILS",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["hours"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_restaurant_details",
+        "description": "Complete restaurant profile: name, rating, address, hours, cuisine, delivery info. Use ONLY with exact business_id from resolve_restaurant or search_restaurants. Do NOT guess IDs.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "merchant_id": {"type": "string", "description": "Exact business ID from resolve_restaurant output."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["merchant_id"]
+        }
+      },
+      "metadata": {
+        "family": "DETAILS",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["name", "business_id", "rating", "cuisine", "address", "delivery_zone", "delivery", "price_range", "phone", "hours", "logo_url"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_restaurant_menu",
+        "description": "Full restaurant menu. Use AFTER resolve_restaurant. Returns all products for a business_id with search, pagination, and category filters. Only call with an ID from resolve_restaurant output.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "merchant_id": {"type": "string", "description": "Exact business ID from resolve_restaurant output."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."},
+            "limit": {"type": "integer", "description": "Max items. Default: 20."},
+            "page": {"type": "integer", "description": "Page number. Default: 1."},
+            "search": {"type": "string", "description": "Optional: text filter within the menu."},
+            "shared": {"type": "boolean", "description": "Optional: shared products only."},
+            "product_type": {"type": "string", "description": "Optional: category filter (desserts, boissons, etc.)."}
+          },
+          "required": ["merchant_id"]
+        }
+      },
+      "metadata": {
+        "family": "DETAILS",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["restaurant", "business_id", "items", "items.*.product_id", "items.*.price", "items.*.diet_tags"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "check_restaurant_open",
+        "description": "Check if a restaurant is currently open and return today's hours. Use with exact business_id from resolve_restaurant output.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "merchant_id": {"type": "string", "description": "Exact business ID from resolve_restaurant output."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["merchant_id"]
+        }
+      },
+      "metadata": {
+        "family": "DETAILS",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["name", "business_id", "hours", "is_open", "delivery_active"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "check_food_available",
+        "description": "Check if a product is currently orderable from a restaurant. Use with exact product_id from search results and optional business_id.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "product_id": {"type": "string", "description": "Exact product ID from search_food or get_restaurant_menu result."},
+            "merchant_id": {"type": "string", "description": "Optional business ID to narrow the check."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["product_id"]
+        }
+      },
+      "metadata": {
+        "family": "DETAILS",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["name", "product_id", "merchant_id", "available", "price", "restaurant"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_delivery_info",
+        "description": "Get delivery zones, estimated time, minimum order, and fees for a restaurant. Use with exact business_id from resolve_restaurant output.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "merchant_id": {"type": "string", "description": "Exact business ID from resolve_restaurant output."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["merchant_id"]
+        }
+      },
+      "metadata": {
+        "family": "DETAILS",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["name", "business_id", "delivers", "delivery_zone", "delivery_fee", "minimum_order", "price_range", "address", "phone"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "validate_products",
+        "description": "Bulk validate a list of product IDs against the catalog. Returns which IDs are valid and which are not found. Use before creating an order to ensure all product IDs are correct.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "product_ids": {"type": "array", "items": {"type": "string"}, "description": "Array of product IDs to validate. Must come from get_restaurant_menu or search_food results."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["product_ids"]
+        }
+      },
+      "metadata": {
+        "family": "DETAILS",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["valid", "invalid"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "create_order",
+        "description": "Create a new order draft. Provide restaurant name and items with product_id and quantity. ALWAYS ask user for explicit confirmation before calling this tool. Internal IDs are resolved automatically.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "description": "Items to add to the draft order. Each item must have product_id and quantity.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "product_id": {"type": "string", "description": "Product ID from search_food, get_restaurant_menu, or validate_products output."},
+                  "quantity": {"type": "integer", "description": "Quantity to order."},
+                  "name": {"type": "string", "description": "Product display name."}
+                },
+                "required": ["product_id", "quantity"]
+              }
+            },
+            "restaurant": {"type": "string", "description": "Restaurant name for display. Resolved automatically."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["items"]
+        }
+      },
+      "metadata": {
+        "family": "ORDERING",
+        "side_effect": true,
+        "requires_confirmation": true,
+        "requires": ["explicit_confirmation"],
+        "produces": ["draft_id", "items", "total", "status", "restaurant"],
+        "produces_key": "draft_id"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "add_to_order",
+        "description": "Add items to an existing order draft by draft_id. ALWAYS ask user for explicit confirmation before calling this tool.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "draft_id": {"type": "string", "description": "Draft ID from a prior create_order call."},
+            "items": {
+              "type": "array",
+              "description": "Items to add. Each item must have product_id and quantity.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "product_id": {"type": "string", "description": "Product ID from search or menu result."},
+                  "quantity": {"type": "integer", "description": "Quantity to add."}
+                },
+                "required": ["product_id", "quantity"]
+              }
+            },
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["draft_id", "items"]
+        }
+      },
+      "metadata": {
+        "family": "ORDERING",
+        "side_effect": true,
+        "requires_confirmation": true,
+        "requires": ["explicit_confirmation", "draft_id"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "remove_from_order",
+        "description": "Remove items from an order draft by product_id. ALWAYS ask user for explicit confirmation before calling this tool.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "draft_id": {"type": "string", "description": "Draft ID from a prior create_order call."},
+            "product_ids": {"type": "array", "items": {"type": "string"}, "description": "Product IDs to remove. Must come from get_order items."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["draft_id", "product_ids"]
+        }
+      },
+      "metadata": {
+        "family": "ORDERING",
+        "side_effect": true,
+        "requires_confirmation": true,
+        "requires": ["explicit_confirmation", "draft_id"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_order",
+        "description": "View the current order draft with all items, quantities, and totals by draft_id. Does NOT modify the order.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "draft_id": {"type": "string", "description": "Draft ID from a prior create_order call or from session context."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["draft_id"]
+        }
+      },
+      "metadata": {
+        "family": "ORDERING",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["draft_id", "items", "items.*.product_id", "items.*.qty", "items.*.unit_price", "total", "item_count", "status"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_user_profile",
+        "description": "Get the current user's profile: name, email, phone. Use when personalizing recommendations or confirming identity.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "user_id": {"type": "string", "description": "User ID injected by system. Do NOT guess or prompt user for this."},
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": ["user_id"]
+        }
+      },
+      "metadata": {
+        "family": "UTILITY",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": ["name", "email", "phone"]
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "help",
+        "description": "List all available tools and their purpose. Use only when the user explicitly asks what you can do.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "language": {"type": "string", "description": "ISO language code. Default: fr."}
+          },
+          "required": []
+        }
+      },
+      "metadata": {
+        "family": "UTILITY",
+        "side_effect": false,
+        "requires_confirmation": false,
+        "produces": []
+      }
+    }
+  ],
+  "families": {
+    "DISCOVERY": {
+      "description": "Broad exploration and name-to-ID resolution. Search dishes, restaurants, promos. No mutations.",
+      "tools": ["search_context", "search_food", "search_restaurants", "resolve_restaurant", "search_all", "find_nearby", "get_promotions"]
+    },
+    "DETAILS": {
+      "description": "Deep-dive into a specific merchant or product. Requires resolved IDs from DISCOVERY tools.",
+      "tools": ["resolve_restaurant", "get_product", "get_food_details", "get_merchant", "get_merchant_hours", "get_restaurant_details", "get_restaurant_menu", "check_restaurant_open", "check_food_available", "get_delivery_info", "validate_products"]
+    },
+    "ORDERING": {
+      "description": "Shopping-cart lifecycle. Mutating tools (create, add, remove) REQUIRE explicit user confirmation.",
+      "tools": ["create_order", "add_to_order", "remove_from_order", "get_order"]
+    },
+    "UTILITY": {
+      "description": "Meta and identity tools.",
+      "tools": ["get_user_profile", "help"]
+    }
+  },
+  "evaluation_rules": {
+    "confirmation_required": {
+      "description": "For tools with requires_confirmation=true, the model MUST ask for and receive explicit user confirmation before the tool call appears.",
+      "applies_to": ["create_order", "add_to_order", "remove_from_order"],
+      "failure_label": "mutation_without_confirmation"
+    },
+    "id_provenance_required": {
+      "description": "For tools with forbidden_without containing product_id/business_id, the ID MUST appear in a prior tool output or user utterance. Invented IDs are a critical error.",
+      "applies_to_all": true,
+      "failure_label": "hallucinated_id"
+    },
+    "tool_ordering": {
+      "description": "resolved tool calls (those producing IDs) must precede detail/ordering tools consuming those IDs.",
+      "rules": [
+        {"before": "resolve_restaurant", "after": ["get_restaurant_menu", "get_restaurant_details", "check_restaurant_open", "get_delivery_info", "get_merchant_hours", "get_promotions"]},
+        {"before": "search_food", "after": ["get_food_details", "get_product", "check_food_available"]},
+        {"before": "create_order", "after": ["get_order", "add_to_order", "remove_from_order"]}
+      ],
+      "failure_label": "missing_prerequisite_tool"
+    },
+    "no_dangerous_tools": {
+      "description": "The following tools are dangerous (DELETE, PATCH/status) and must NEVER appear in model output. Any call to these is a critical failure.",
+      "blocked": ["delete_product", "delete_business", "delete_campaign", "delete_table", "delete_user", "delete_media", "delete_city", "delete_district", "change_business_status", "change_campaign_status", "remove_business_from_campaign", "update_product", "update_business", "update_campaign", "bulk_delete_tables"],
+      "failure_label": "dangerous_tool_called"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+
+unsloth_compiled_cache/
+__pycache__/
+*.pyc
+runs/*/checkpoints/
+runs/*/eval/*_predictions.jsonl
+*.safetensors
+*.bin
+*.pth
+*.pt
+unsloth_compiled_cache/
+__pycache__/
+*.pyc

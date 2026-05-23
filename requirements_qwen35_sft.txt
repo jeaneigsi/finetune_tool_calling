@@ -1,0 +1,16 @@
+# Use a fresh Python 3.11/3.12 env with CUDA-enabled PyTorch first.
+unsloth
+unsloth_zoo
+trl>=0.22.2
+transformers>=5.0.0rc0
+datasets>=4.3.0
+accelerate
+bitsandbytes
+sentencepiece
+protobuf
+peft
+pyyaml
+tensorboard
+clearml
+mlflow
+wandb
