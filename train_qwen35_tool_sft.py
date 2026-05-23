@@ -546,6 +546,7 @@ def main() -> None:
     ap.add_argument("--eval-workers", type=int, default=2, help="Num workers for eval dataset tokenization")
     ap.add_argument("--skip-baseline", action="store_true", help="Skip the baseline evaluation run")
     ap.add_argument("--attn-implementation", default="flash_attention_2", choices=["flash_attention_2", "sdpa", "eager"])
+    ap.add_argument("--export-gguf", default=None, help="Export merged model to GGUF (e.g. q4_k_m, q8_0, f16)")
     ap.add_argument("--report-to", default="tensorboard", choices=["none", "tensorboard", "clearml", "wandb", "mlflow"])
     ap.add_argument("--clearml-project", default="JBUJB-Qwen35-ToolSFT")
     ap.add_argument("--clearml-task", default=None)
@@ -670,6 +671,19 @@ def main() -> None:
     model.save_pretrained(str(adapter_dir))
     tokenizer.save_pretrained(str(adapter_dir))
     print(f"Saved LoRA adapter to {adapter_dir}")
+
+    # ── Optional GGUF export ──
+    if args.export_gguf:
+        gguf_dir = out_dir / "gguf"
+        gguf_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Exporting GGUF ({args.export_gguf}) to {gguf_dir}...")
+        try:
+            model.save_pretrained_merged(str(out_dir / "merged"), tokenizer, save_method="merged_16bit")
+            from unsloth import save_pretrained_gguf
+            save_pretrained_gguf(str(out_dir / "merged"), tokenizer, quantization_method=args.export_gguf)
+            print(f"GGUF exported to {gguf_dir}")
+        except Exception as e:
+            print(f"GGUF export failed: {e}. Try: pip install unsloth[gguf]")
 
     print("Running post-training eval...")
     sft_report = evaluate_model(
