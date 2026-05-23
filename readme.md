@@ -1020,20 +1020,21 @@ the attention computation into a single CUDA kernel, reducing GPU memory I/O.
 ### Quick install (pre-compiled wheel)
 
 ```bash
+# For CUDA 12.x (Ampere/Ada/Hopper: A100, RTX 4090, H100, etc.)
 pip install flash-attn --no-build-isolation
-```
 
-### Compile from source (if pre-compiled fails)
-
-```bash
-# Limit parallel jobs to avoid OOM on low-RAM machines
-MAX_JOBS=4 pip install flash-attn --no-build-isolation
+# For CUDA 13.x (Blackwell: RTX PRO 6000, B200, etc.)
+pip install "flash-attn-4[cu13]"
 ```
 
 ### Verify installation
 
 ```bash
+# Flash Attention 2 (CUDA 12.x)
 python -c "from flash_attn import flash_attn_func; print('Flash Attention 2 OK')"
+
+# Flash Attention 4 (CUDA 13.x / Blackwell)
+python -c "from flash_attn.cute import flash_attn_func; print('Flash Attention 4 OK')"
 ```
 
 ### Common issues
