@@ -25,13 +25,11 @@ Expected JSONL row:
 
 from __future__ import annotations
 
-"""
 try:
     from unsloth import FastModel
 except Exception:
     from unsloth import FastLanguageModel as FastModel  # older Unsloth fallback
 
-    
 import argparse
 import copy
 import hashlib
@@ -401,6 +399,44 @@ def generate_raw(model: Any, tokenizer: Any, messages: List[dict], tools: List[d
     return tokenizer.decode(out[0][input_len:], skip_special_tokens=True).strip()
 
 
+def log_to_clearml(report: dict, prefix: str = "", step: int = 0) -> None:
+    """Log evaluation report as ClearML scalars."""
+    try:
+        from clearml import Task
+        task = Task.current_task()
+        if task is None:
+            return
+        logger = task.get_logger()
+        scalar_keys = [
+            "json_validity", "type_accuracy", "tool_accuracy",
+            "required_args_accuracy", "exact_args_accuracy",
+            "unknown_tool_rate", "hallucinated_id_rate", "exact_action_accuracy",
+            "latency_sec", "total",
+        ]
+        for k in scalar_keys:
+            if k in report:
+                logger.report_scalar(
+                    title=f"{prefix}_{k}" if prefix else k,
+                    series=k,
+                    value=report[k],
+                    iteration=step,
+                )
+        # Per-pattern metrics
+        for pattern, metrics in report.get("by_workflow_pattern", {}).items():
+            for k, v in metrics.items():
+                if isinstance(v, (int, float)):
+                    logger.report_scalar(
+                        title=f"{prefix}_by_pattern" if prefix else "by_pattern",
+                        series=f"{pattern}/{k}",
+                        value=v,
+                        iteration=step,
+                    )
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f"[clearml] Failed to log metrics: {e}")
+
+
 def evaluate_model(model: Any, tokenizer: Any, rows: List[dict], tools: List[dict], out_dir: Path, name: str, limit: int, max_new_tokens: int) -> dict:
     cases = build_eval_cases(rows)
     if limit:
@@ -412,9 +448,11 @@ def evaluate_model(model: Any, tokenizer: Any, rows: List[dict], tools: List[dic
     start = time.time()
 
     for i, case in enumerate(cases, 1):
+        t0 = time.time()
         raw = generate_raw(model, tokenizer, case["messages"], tools, max_new_tokens=max_new_tokens)
         pred = normalize_prediction(raw)
         metrics = score_prediction(pred, case["expected"], allowed)
+        elapsed = time.time() - t0
         for k, v in metrics.items():
             if v:
                 counts[k] += 1
@@ -424,8 +462,12 @@ def evaluate_model(model: Any, tokenizer: Any, rows: List[dict], tools: List[dic
                 by_pattern[pattern][k] += 1
         by_pattern[pattern]["total"] += 1
         preds.append({**case, "raw_output": raw, "prediction": pred, "metrics": metrics})
-        if i % 25 == 0:
-            print(f"[{name}] evaluated {i}/{len(cases)}")
+        if i % 25 == 0 or i == 1 or i == len(cases):
+            avg_time = (time.time() - start) / i
+            eta = avg_time * (len(cases) - i)
+            running_json = counts["json_valid"] / i
+            running_tool = counts["tool_match"] / i if counts["exact_action_match"] else 0
+            print(f"[{name}] {i}/{len(cases)} | json={running_json:.0%} tool={running_tool:.0%} | {elapsed:.1f}s/step | ETA {eta:.0f}s")
 
     total = max(len(cases), 1)
     report = {
@@ -532,6 +574,8 @@ def main() -> None:
         limit=args.baseline_limit,
         max_new_tokens=args.eval_max_new_tokens,
     )
+    if args.report_to == "clearml":
+        log_to_clearml(baseline_report, prefix="baseline")
 
     print("Preparing text datasets...")
     train_ds = build_text_dataset(train_rows, tokenizer, tools, max_chars=None)
@@ -597,7 +641,7 @@ def main() -> None:
     print(f"Saved LoRA adapter to {adapter_dir}")
 
     print("Running post-training eval...")
-    evaluate_model(
+    sft_report = evaluate_model(
         model=model,
         tokenizer=tokenizer,
         rows=val_rows,
@@ -607,8 +651,18 @@ def main() -> None:
         limit=args.baseline_limit,
         max_new_tokens=args.eval_max_new_tokens,
     )
+    if args.report_to == "clearml":
+        log_to_clearml(sft_report, prefix="sft")
+        # Log delta (improvement)
+        from clearml import Task
+        task = Task.current_task()
+        if task:
+            logger = task.get_logger()
+            for k in ["json_validity", "tool_accuracy", "exact_action_accuracy", "hallucinated_id_rate"]:
+                delta = sft_report[k] - baseline_report[k]
+                logger.report_scalar(title="delta_sft_vs_baseline", series=k, value=delta)
     if test_rows:
-        evaluate_model(
+        test_report = evaluate_model(
             model=model,
             tokenizer=tokenizer,
             rows=test_rows,
@@ -618,6 +672,8 @@ def main() -> None:
             limit=args.baseline_limit,
             max_new_tokens=args.eval_max_new_tokens,
         )
+        if args.report_to == "clearml":
+            log_to_clearml(test_report, prefix="sft_test")
 
 
 if __name__ == "__main__":
