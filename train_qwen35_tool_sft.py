@@ -322,6 +322,24 @@ def extract_first_json(text: str) -> Optional[Any]:
 def normalize_prediction(raw: str) -> Optional[dict]:
     obj = extract_first_json(raw)
     if obj is None:
+        # Try Qwen XML tool-call format: ...⟨/think⟩<tool_call><function=name><parameter=p>v</parameter></function></tool_call>
+        # Strip any ⟨think⟩...⟨/think⟩ prefix
+        raw_clean = re.sub(r'⟨think⟩.*?⟨/think⟩', '', raw, flags=re.S | re.I)
+        tc_match = re.search(r'<tool_call>\s*<function=(\w+)>(.*?)</function>\s*</tool_call>', raw_clean, re.S | re.I)
+        if tc_match:
+            name = tc_match.group(1)
+            args: dict[str, Any] = {}
+            for pm in re.finditer(r'<parameter=(\w+)>\s*(.*?)\s*</parameter>', tc_match.group(2), re.S):
+                val = pm.group(2).strip()
+                # Try parsing numeric values
+                try:
+                    if '.' in val: val = float(val)
+                    else: val = int(val)
+                except ValueError:
+                    pass
+                args[pm.group(1)] = val
+            if name:
+                return {"type": "tool_call", "name": name, "arguments": args}
         return None
     # Qwen/tool templates often produce list of tool calls
     if isinstance(obj, list) and obj:
