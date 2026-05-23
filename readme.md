@@ -1,0 +1,1189 @@
+Voici un `README.md` complet que tu peux mettre directement à la racine de ton repo.
+
+````md
+# Tool Dataset Weaver — Synthetic Tool-Calling Dataset Generator for Reasoning Models
+
+## Overview
+
+**Tool Dataset Weaver** is a framework for generating, validating, evaluating, and fine-tuning high-quality multi-turn tool-calling datasets.
+
+The project is inspired by the **ToolWeave** methodology: instead of generating tool-calling conversations directly from prompts, the dataset is built through a structured pipeline:
+
+```text
+Tool Registry
+→ Tool Graph
+→ User Goals
+→ Workflows
+→ Executable Plans
+→ Simulated Tool Outputs
+→ Multi-turn Dialogues
+→ Validation
+→ Baseline Evaluation
+→ Fine-tuning
+→ Post-training Evaluation
+````
+
+The objective is to train small language models, such as **Qwen3.5-4B**, to behave like reliable reasoning agents that can:
+
+```text
+understand the user request
+identify missing information
+select the correct tool
+avoid inventing IDs
+follow tool dependencies
+ask clarification when needed
+respect confirmation rules
+recover from tool errors
+produce valid tool calls
+```
+
+This repository is not just a dataset generator. It is a full experimental stack for building a domain-specific tool-calling model.
+
+---
+
+## Why this project exists
+
+Most tool-calling datasets are generated in a naïve way:
+
+```text
+User request → tool call
+```
+
+This is not enough for real agentic behavior.
+
+A model trained only on direct mappings may learn to call tools, but it often fails when the task requires reasoning across multiple steps:
+
+```text
+resolve restaurant
+→ search product
+→ verify availability
+→ ask confirmation
+→ create draft order
+```
+
+The main problems we want to avoid are:
+
+```text
+parameter hallucination
+wrong tool order
+missing clarification
+unsafe mutation without confirmation
+invalid JSON
+tool calls without context
+IDs invented by the model
+datasets that look correct but are not executable
+```
+
+For example, a bad dataset may teach the model to do this:
+
+```json
+{
+  "type": "tool_call",
+  "name": "create_order",
+  "arguments": {
+    "items": [
+      {
+        "product_id": "prod_123",
+        "quantity": 2
+      }
+    ]
+  }
+}
+```
+
+even if `prod_123` was never produced by a previous tool.
+
+This repository fixes that by forcing every tool argument to have a clear provenance.
+
+---
+
+## Core idea
+
+The core principle is simple:
+
+> A tool-calling dataset should be compiled like a program, not improvised like a conversation.
+
+Every tool call must be explainable from the current state:
+
+```text
+argument source ∈ {
+  user_input,
+  session_context,
+  tool_default,
+  system_default,
+  previous_tool_output,
+  confirmation_turn
+}
+```
+
+If an argument has no valid source, the example must be rejected.
+
+This is especially important for IDs:
+
+```text
+merchant_id
+product_id
+draft_id
+user_id
+order_id
+```
+
+The model must never learn to invent these values.
+
+---
+
+## Project goal
+
+The main goal of this repo is to build a reliable fine-tuning pipeline for a small reasoning model specialized in tool use.
+
+The current target model is:
+
+```text
+unsloth/Qwen3.5-4B
+```
+
+The training strategy is:
+
+```text
+1. Generate structured tool-calling conversations
+2. Validate the dataset before training
+3. Run baseline evaluation on the base model
+4. Fine-tune with LoRA / QLoRA using Unsloth
+5. Evaluate the fine-tuned model
+6. Compare baseline vs fine-tuned performance
+7. Analyze errors
+8. Regenerate better data based on failures
+```
+
+The first objective is not to maximize benchmark scores.
+The first objective is to build a model that behaves safely and predictably in a real tool-calling environment.
+
+---
+
+## Repository responsibilities
+
+This repository handles five major responsibilities.
+
+### 1. Dataset generation
+
+The repo generates multi-turn conversations from structured tool workflows.
+
+It does not generate conversations directly. It first creates intermediate representations:
+
+```text
+tool registry
+tool graph
+workflow pattern
+user goal
+executable plan
+simulated outputs
+dialogue
+```
+
+This allows the dataset to remain auditable.
+
+---
+
+### 2. Dataset validation
+
+The repo validates every generated dialogue before training.
+
+The validator checks:
+
+```text
+JSON validity
+message structure
+role order
+tool existence
+required arguments
+argument types
+unknown arguments
+parameter provenance
+empty IDs
+confirmation before mutation
+dangerous tool blocking
+workflow order
+tool output consistency
+```
+
+A dialogue should not enter training if it violates the rules.
+
+---
+
+### 3. Baseline evaluation
+
+Before fine-tuning, the base model is tested on the validation or test dataset.
+
+This answers the question:
+
+> How good is the base model before training?
+
+The baseline evaluation measures:
+
+```text
+json_validity
+action_type_accuracy
+tool_accuracy
+required_args_accuracy
+exact_args_accuracy
+exact_action_accuracy
+hallucinated_id_rate
+confirmation_policy_accuracy
+```
+
+Without baseline evaluation, the fine-tuning result cannot be trusted.
+
+---
+
+### 4. Fine-tuning
+
+The repo includes a training script for Qwen3.5-4B using Unsloth.
+
+The current training strategy is:
+
+```text
+bf16 LoRA when the GPU supports it
+QLoRA only if memory is limited
+ClearML logging for experiment tracking
+baseline evaluation before training
+post-training evaluation after training
+```
+
+For Qwen3.5-4B, bf16 LoRA is preferred when enough VRAM is available.
+
+---
+
+### 5. Experiment tracking
+
+The repo supports experiment monitoring with ClearML.
+
+ClearML is used to track:
+
+```text
+training loss
+eval loss
+learning rate
+gradient norm
+training runtime
+baseline metrics
+post-SFT metrics
+prediction files
+error analysis files
+model artifacts
+```
+
+The goal is not only to know whether the loss decreased.
+The goal is to know whether the model became better at tool reasoning.
+
+---
+
+## ToolWeave-inspired pipeline
+
+The project follows a ToolWeave-style generation process.
+
+### Step 1 — Tool Registry
+
+The tool registry is the source of truth for all tools.
+
+It defines:
+
+```text
+tool name
+description
+input schema
+required parameters
+output schema
+tool family
+side effects
+confirmation rules
+security rules
+```
+
+Example:
+
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "resolve_restaurant",
+    "description": "Resolve a free-form restaurant name into an exact business identifier.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        }
+      },
+      "required": ["name"]
+    }
+  },
+  "metadata": {
+    "family": "DETAILS",
+    "side_effect": false,
+    "requires_confirmation": false,
+    "produces": ["business_id", "business_name", "confidence"]
+  }
+}
+```
+
+The registry is used by both the generator and the evaluator.
+
+---
+
+### Step 2 — Tool Graph
+
+The tool graph defines how tools can be chained.
+
+It describes valid data flow between tool outputs and tool inputs.
+
+Example:
+
+```yaml
+edges:
+  - from: resolve_restaurant
+    to: get_restaurant_menu
+    dataflow:
+      business_id: merchant_id
+    reason: get_restaurant_menu requires a merchant_id produced by resolve_restaurant.
+
+  - from: search_food
+    to: get_food_details
+    dataflow:
+      product_id: product_id
+    reason: get_food_details requires a product_id produced by search_food.
+```
+
+This prevents invalid chains such as:
+
+```text
+get_restaurant_menu before resolve_restaurant
+create_order before product_id exists
+check_food_available with empty IDs
+```
+
+---
+
+### Step 3 — User Goals
+
+A user goal is an abstract task.
+
+Example:
+
+```json
+{
+  "goal_id": "goal_0001",
+  "workflow_pattern": "ordering_from_named_restaurant",
+  "goal": "Create a draft order for two chicken tacos from Tacos de Lyon after explicit confirmation.",
+  "entities": {
+    "restaurant_name": "Tacos de Lyon",
+    "item_name": "tacos poulet",
+    "quantity": 2,
+    "language": "fr"
+  },
+  "constraints": [
+    "Do not invent merchant_id",
+    "Do not invent product_id",
+    "Ask confirmation before create_order"
+  ]
+}
+```
+
+The user goal is not yet a dialogue.
+It is the intent that will drive the workflow.
+
+---
+
+### Step 4 — Workflow Sampling
+
+A workflow is the logical chain of actions required to satisfy the goal.
+
+Example:
+
+```text
+resolve_restaurant
+→ search_food
+→ ask_confirmation
+→ create_order
+```
+
+Workflow patterns currently include:
+
+```text
+discovery_only
+details_with_resolution
+ordering_from_named_restaurant
+order_modification
+clarification_required
+failure_recovery
+refusal_or_blocked
+```
+
+The workflow must be semantically valid.
+
+---
+
+### Step 5 — Executable Plan
+
+The executable plan is the most important intermediate representation.
+
+It specifies:
+
+```text
+which tool is called
+which arguments are used
+where each argument comes from
+which outputs are expected
+which preconditions must hold
+```
+
+Example:
+
+```json
+{
+  "step": 2,
+  "type": "tool_call",
+  "tool": "search_food",
+  "arguments": {
+    "query": {
+      "value": "tacos poulet",
+      "source": "user_input"
+    },
+    "business_id": {
+      "value": "$step1.output.business_id",
+      "source": "previous_tool_output"
+    },
+    "language": {
+      "value": "fr",
+      "source": "system_default"
+    }
+  }
+}
+```
+
+The rule is strict:
+
+> No argument can appear in a tool call if it does not exist in the executable plan with a valid source.
+
+---
+
+### Step 6 — Tool Simulation
+
+The repo simulates realistic tool outputs.
+
+Example:
+
+```json
+{
+  "resolved": true,
+  "business_id": "biz_001",
+  "business_name": "Tacos de Lyon",
+  "confidence": 0.96
+}
+```
+
+The simulator can also generate failure cases:
+
+```text
+restaurant not found
+ambiguous restaurant
+empty search result
+product unavailable
+restaurant closed
+invalid draft_id
+missing location
+```
+
+Failure cases are important because they teach the model how to recover instead of blindly continuing.
+
+---
+
+### Step 7 — Dialogue Synthesis
+
+Only after the plan and simulated outputs are ready, the repo generates the final conversation.
+
+Example:
+
+```json
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are JBUJB assistant. Use only available tools. Never invent IDs."
+    },
+    {
+      "role": "user",
+      "content": "Je veux commander deux tacos poulet chez Tacos de Lyon"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+            "name": "resolve_restaurant",
+            "arguments": "{\"name\":\"Tacos de Lyon\",\"language\":\"fr\",\"limit\":5}"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+The dialogue is the final training artifact, but it is not the source of truth.
+The source of truth is the structured plan behind it.
+
+---
+
+## Dataset format
+
+The dataset uses JSONL format.
+
+Each line is one dialogue:
+
+```json
+{
+  "id": "dialogue_0001",
+  "messages": [],
+  "metadata": {}
+}
+```
+
+The `messages` field follows a chat format compatible with common SFT pipelines:
+
+```json
+[
+  {
+    "role": "system",
+    "content": "..."
+  },
+  {
+    "role": "user",
+    "content": "..."
+  },
+  {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": []
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "call_1",
+    "name": "search_food",
+    "content": "{}"
+  },
+  {
+    "role": "assistant",
+    "content": "..."
+  }
+]
+```
+
+The `metadata` field may contain:
+
+```json
+{
+  "plan_id": "plan_0001",
+  "goal_id": "goal_0001",
+  "workflow_pattern": "ordering_from_named_restaurant",
+  "language": "fr",
+  "tools_used": ["resolve_restaurant", "search_food", "create_order"],
+  "has_confirmation": true,
+  "has_parameter_provenance": true,
+  "simulated_outputs": true
+}
+```
+
+---
+
+## Dataset splits
+
+The dataset should be split into:
+
+```text
+train.jsonl
+validation.jsonl
+test.jsonl
+test_hard.jsonl
+```
+
+The split should avoid leakage.
+
+If multiple dialogues come from the same `goal_id`, they must remain in the same split.
+
+The goal is to avoid this situation:
+
+```text
+train: "Je veux commander deux tacos chez Tacos de Lyon"
+test:  "Mets-moi deux tacos chez Tacos de Lyon"
+```
+
+If both examples come from the same goal, the model is not really being tested on generalization.
+
+---
+
+## Baseline evaluation
+
+Before fine-tuning, the repo evaluates the base model.
+
+The baseline answers:
+
+```text
+How well does the base model perform before training?
+```
+
+Metrics include:
+
+```text
+json_validity
+action_type_accuracy
+tool_accuracy
+required_args_accuracy
+exact_args_accuracy
+exact_action_accuracy
+hallucinated_id_rate
+confirmation_policy_accuracy
+```
+
+This baseline is essential because it gives a real comparison point.
+
+Example:
+
+```text
+Base Qwen3.5-4B:
+json_validity: 0.72
+tool_accuracy: 0.51
+required_args_accuracy: 0.44
+confirmation_policy_accuracy: 0.36
+
+Fine-tuned Qwen3.5-4B:
+json_validity: 0.94
+tool_accuracy: 0.83
+required_args_accuracy: 0.78
+confirmation_policy_accuracy: 0.91
+```
+
+---
+
+## Fine-tuning strategy
+
+The current fine-tuning script targets:
+
+```text
+unsloth/Qwen3.5-4B
+```
+
+The recommended training approach is:
+
+```text
+bf16 LoRA if GPU supports bf16
+QLoRA only when VRAM is limited
+```
+
+Recommended GPU:
+
+```text
+RTX 4090 24 GB
+RTX A6000 48 GB
+RTX 6000 Ada 48 GB
+RTX PRO 6000 Blackwell 96 GB
+L40S 48 GB
+```
+
+For a powerful GPU with enough VRAM, use bf16 LoRA.
+
+Example command:
+
+```bash
+python train_qwen35_tool_sft.py \
+  --model unsloth/Qwen3.5-4B \
+  --train outputs/splits/train.jsonl \
+  --validation outputs/splits/validation.jsonl \
+  --test outputs/splits/test.jsonl \
+  --tool-registry data/tool_registry.json \
+  --output-dir runs/qwen35_4b_tool_sft_v1 \
+  --max-seq-length 4096 \
+  --dtype bf16 \
+  --lora-r 64 \
+  --lora-alpha 128 \
+  --batch-size 8 \
+  --grad-accum 2 \
+  --epochs 1 \
+  --lr 2e-5 \
+  --baseline-limit 100 \
+  --report-to clearml
+```
+
+---
+
+## Training script responsibilities
+
+The training script does more than fine-tuning.
+
+It is responsible for:
+
+```text
+loading train / validation / test datasets
+loading the tool registry
+normalizing tool-call messages
+formatting conversations with the Qwen chat template
+running baseline evaluation before training
+training the LoRA adapter
+saving the adapter
+running post-SFT evaluation
+saving predictions and reports
+logging metrics to ClearML
+```
+
+Expected outputs:
+
+```text
+runs/qwen35_4b_tool_sft_v1/
+  adapter/
+  eval/
+    baseline_validation_raw_report.json
+    baseline_validation_raw_predictions.jsonl
+    sft_validation_raw_report.json
+    sft_validation_raw_predictions.jsonl
+    sft_test_raw_report.json
+    sft_test_raw_predictions.jsonl
+  run_config.json
+```
+
+---
+
+## ClearML observability
+
+ClearML is used to track experiments.
+
+It should display classic training metrics:
+
+```text
+train_loss
+eval_loss
+learning_rate
+grad_norm
+epoch
+global_step
+runtime
+samples_per_second
+steps_per_second
+```
+
+It should also track custom tool-calling metrics:
+
+```text
+baseline_json_validity
+baseline_tool_accuracy
+baseline_required_args_accuracy
+baseline_hallucinated_id_rate
+baseline_confirmation_policy_accuracy
+
+post_sft_json_validity
+post_sft_tool_accuracy
+post_sft_required_args_accuracy
+post_sft_hallucinated_id_rate
+post_sft_confirmation_policy_accuracy
+```
+
+The most important metrics are:
+
+```text
+tool_accuracy
+required_args_accuracy
+hallucinated_id_rate
+confirmation_policy_accuracy
+exact_action_accuracy
+```
+
+The loss alone is not enough.
+
+A model with low loss can still be unsafe if it creates orders without confirmation or invents IDs.
+
+---
+
+## Error analysis
+
+Every evaluation run should produce an error analysis file.
+
+Example:
+
+```json
+{
+  "id": "case_001",
+  "workflow_pattern": "ordering_from_named_restaurant",
+  "user": "Commande-moi deux tacos poulet",
+  "expected": {
+    "type": "assistant_message",
+    "policy": "ask_confirmation"
+  },
+  "prediction": {
+    "type": "tool_call",
+    "name": "create_order"
+  },
+  "error_type": "mutation_without_confirmation",
+  "severity": "critical"
+}
+```
+
+This file is used to improve the dataset.
+
+The loop is:
+
+```text
+evaluate model
+→ inspect errors
+→ classify failures
+→ generate targeted examples
+→ retrain
+→ compare
+```
+
+---
+
+## Evaluation philosophy
+
+The model is not evaluated like a normal chatbot.
+
+It is evaluated like an agent.
+
+A good model must:
+
+```text
+choose the right tool
+produce valid JSON
+provide required arguments
+avoid hallucinated IDs
+respect tool dependencies
+ask clarification when information is missing
+ask confirmation before mutating actions
+recover from tool errors
+refuse dangerous actions
+```
+
+A bad model may still sound fluent, but if it violates tool rules, it is not production-ready.
+
+---
+
+## Current training stack
+
+The current stack is:
+
+```text
+Model: unsloth/Qwen3.5-4B
+Training: Unsloth + TRL SFTTrainer
+Adapter: LoRA / optional QLoRA
+Monitoring: ClearML
+Evaluation: custom EvalOps
+Inference testing: Transformers / Unsloth
+Future serving: vLLM or SGLang
+```
+
+Recommended future stack:
+
+```text
+Training: Unsloth
+Experiment tracking: ClearML or MLflow
+Inference: vLLM
+LLM tracing: Langfuse
+System observability: OpenTelemetry + OpenObserve
+```
+
+---
+
+## Important implementation notes
+
+### Qwen3.5 tokenizer / processor issue
+
+For Qwen3.5, `FastModel.from_pretrained()` may return a processor instead of a plain tokenizer.
+
+The script must extract the inner text tokenizer:
+
+```python
+model, processor_or_tokenizer = FastModel.from_pretrained(...)
+
+tokenizer = getattr(processor_or_tokenizer, "tokenizer", processor_or_tokenizer)
+```
+
+This avoids errors where the processor expects multimodal content blocks:
+
+```json
+[
+  {
+    "type": "text",
+    "text": "..."
+  }
+]
+```
+
+while the dataset uses normal text messages:
+
+```json
+{
+  "role": "user",
+  "content": "Je veux commander deux tacos"
+}
+```
+
+---
+
+### Flash Attention
+
+Flash Attention is useful for speed, especially with long contexts.
+
+However, it is optional.
+
+If Flash Attention is not installed or fails to compile, Unsloth can fall back to Xformers.
+
+Typical message:
+
+```text
+Flash Attention 2 installation seems to be broken. Using Xformers instead.
+```
+
+This is not blocking.
+
+For the current training objective, correctness matters more than squeezing maximum speed from the first run.
+
+---
+
+## Validation rules
+
+Before training, the dataset should pass these rules:
+
+```text
+each dialogue has at least system → user → assistant
+assistant tool calls are valid
+tool names exist in the registry
+tool arguments match schema
+required arguments are present
+no unknown argument is added
+tool outputs are valid JSON
+IDs are not empty
+IDs are not invented
+mutating tools require confirmation
+dangerous tools are excluded from normal training
+workflow order is respected
+```
+
+Examples with the following issues must be rejected or repaired:
+
+```text
+missing user message
+empty product_id
+empty merchant_id
+empty draft_id
+create_order without confirmation
+get_restaurant_menu without merchant_id
+tool call before required resolver
+invalid JSON arguments
+```
+
+---
+
+## Recommended development workflow
+
+Use this workflow for each experiment:
+
+```text
+1. Generate dataset
+2. Validate dataset
+3. Split train / validation / test / test_hard
+4. Run baseline evaluation on base model
+5. Fine-tune model
+6. Run post-SFT evaluation
+7. Compare baseline vs fine-tuned model
+8. Analyze errors
+9. Generate targeted correction data
+10. Retrain
+```
+
+Do not skip baseline evaluation.
+
+Do not trust loss alone.
+
+Do not train on invalid dialogues.
+
+---
+
+## Suggested repository structure
+
+```text
+.
+├── data/
+│   ├── tool_registry.json
+│   ├── tool_graph.yaml
+│   ├── workflow_patterns.yaml
+│   └── seed_entities.yaml
+│
+├── outputs/
+│   ├── clean_dialogues.jsonl
+│   ├── rejected_dialogues.jsonl
+│   └── splits/
+│       ├── train.jsonl
+│       ├── validation.jsonl
+│       ├── test.jsonl
+│       └── test_hard.jsonl
+│
+├── scripts/
+│   ├── validate_dataset.py
+│   ├── split_dataset.py
+│   └── check_split_leakage.py
+│
+├── evalops/
+│   ├── runner.py
+│   ├── parser.py
+│   ├── scorers.py
+│   └── report.py
+│
+├── training/
+│   └── train_qwen35_tool_sft.py
+│
+├── runs/
+│   └── qwen35_4b_tool_sft_v1/
+│
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Roadmap
+
+### Phase 1 — Dataset foundation
+
+```text
+tool registry
+tool graph
+workflow patterns
+goal generation
+executable plans
+dialogue generation
+validation
+```
+
+### Phase 2 — Baseline and SFT
+
+```text
+baseline evaluation
+Qwen3.5-4B LoRA fine-tuning
+post-SFT evaluation
+ClearML tracking
+error analysis
+```
+
+### Phase 3 — Dataset improvement
+
+```text
+negative examples
+failure recovery examples
+hard test set
+workflow balancing
+tool confusion analysis
+```
+
+### Phase 4 — Reasoning model improvement
+
+```text
+plan + action training format
+preference pairs
+DPO / ORPO
+GRPO / ToolRL environment
+reward functions
+```
+
+### Phase 5 — Production readiness
+
+```text
+vLLM serving
+tool-call guardrails
+runtime validation
+OpenTelemetry tracing
+OpenObserve monitoring
+Langfuse traces
+model regression tests
+```
+
+---
+
+## Long-term vision
+
+The long-term goal is to build a small domain-specific reasoning model capable of reliable tool use.
+
+This model should be able to:
+
+```text
+understand user intent
+plan the next action
+call tools safely
+read tool outputs
+continue multi-step workflows
+avoid hallucinating operational IDs
+respect business constraints
+recover from errors
+produce production-ready structured outputs
+```
+
+The broader vision is to turn this repo into a reusable framework:
+
+> A tool-calling dataset and training framework that can take a semantic tool registry and produce high-quality multi-turn reasoning trajectories for fine-tuning small language models.
+
+---
+
+## Status
+
+Current focus:
+
+```text
+Qwen3.5-4B SFT
+Tool-calling dataset validation
+Baseline vs fine-tuned evaluation
+ClearML experiment tracking
+JBUJB food-ordering tool workflows
+```
+
+Next priorities:
+
+```text
+improve dataset validation
+log custom metrics to ClearML
+fix or ignore Flash Attention depending on speed needs
+run first full baseline
+run first LoRA fine-tuning
+analyze post-training errors
+generate targeted correction dataset
+```
+
+---
+
+## Important warning
+
+This project should not train on dirty data.
+
+Before any training run, check:
+
+```text
+no missing user turns
+no empty IDs
+no invalid tool calls
+no unsafe mutation without confirmation
+no impossible tool chain
+no fake product_id / merchant_id / draft_id
+```
+
+A small clean dataset is better than a large corrupted dataset.
+
+The goal is not to generate more data.
+
+The goal is to generate data that teaches the model correct agentic behavior.
+
+```
+```
