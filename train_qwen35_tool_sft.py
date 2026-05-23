@@ -224,12 +224,12 @@ def format_row(row: dict, tokenizer: Any, tools: List[dict], max_chars: Optional
         text = tokenizer.apply_chat_template(
             messages,
             tools=tools if tools else None,
-            add_generation_prompt=False,
+            add_generation_prompt=True,
             tokenize=False,
         )
     except TypeError:
         # Some templates do not accept tools=None / tools=...
-        text = tokenizer.apply_chat_template(messages, add_generation_prompt=False, tokenize=False)
+        text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
     if isinstance(text, str):
         text = text.removeprefix("<bos>")
     if max_chars and len(text) > max_chars:
@@ -462,7 +462,7 @@ def main() -> None:
     ap.add_argument("--test", default=None)
     ap.add_argument("--tool-registry", default=None)
     ap.add_argument("--output-dir", default="runs/qwen35_tool_sft")
-    ap.add_argument("--max-seq-length", type=int, default=4096)
+    ap.add_argument("--max-seq-length", type=int, default=2048)
     ap.add_argument("--load-in-4bit", action="store_true", help="QLoRA mode. Not recommended by Unsloth for Qwen3.5; use only if VRAM forces it.")
     ap.add_argument("--load-in-8bit", action="store_true")
     ap.add_argument("--dtype", default="bf16", choices=["bf16", "fp16", "auto"])
