@@ -548,6 +548,8 @@ def main() -> None:
     ap.add_argument("--attn-implementation", default="flash_attention_2", choices=["flash_attention_2", "sdpa", "eager"])
     ap.add_argument("--export-gguf", default=None, help="Export to GGUF via unsloth (e.g. q4_k_m, q8_0, f16)")
     ap.add_argument("--export-merged", action="store_true", help="Export merged 16bit model for vLLM deployment")
+    ap.add_argument("--push-to-hub", default=None, help="Push merged model to HuggingFace Hub (e.g. moncrolio/jbujb-qwen-tool-sft)")
+    ap.add_argument("--hf-token", default=None, help="HuggingFace token for push_to_hub")
     ap.add_argument("--report-to", default="tensorboard", choices=["none", "tensorboard", "clearml", "wandb", "mlflow"])
     ap.add_argument("--clearml-project", default="JBUJB-Qwen35-ToolSFT")
     ap.add_argument("--clearml-task", default=None)
@@ -691,6 +693,33 @@ def main() -> None:
             print(f"GGUF exported to {gguf_dir}")
         except Exception as e:
             print(f"GGUF export failed: {e}. Try: pip install unsloth[gguf]")
+
+    # ── Optional HuggingFace Hub push ──
+    if args.push_to_hub:
+        token = args.hf_token or os.environ.get("HF_TOKEN")
+        if not token:
+            print("HF push skipped: no --hf-token and HF_TOKEN not set")
+        else:
+            print(f"Pushing merged model to {args.push_to_hub}...")
+            try:
+                model.push_to_hub_merged(
+                    args.push_to_hub,
+                    tokenizer,
+                    token=token,
+                    private=False,
+                )
+                print(f"Model pushed to https://huggingface.co/{args.push_to_hub}")
+                # Also push the GGUF if we exported one
+                if args.export_gguf:
+                    model.push_to_hub_gguf(
+                        args.push_to_hub,
+                        tokenizer,
+                        quantization_method=args.export_gguf,
+                        token=token,
+                    )
+                    print(f"GGUF pushed to https://huggingface.co/{args.push_to_hub}")
+            except Exception as e:
+                print(f"HF push failed: {e}")
 
     print("Running post-training eval...")
     sft_report = evaluate_model(
