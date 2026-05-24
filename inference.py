@@ -2,32 +2,56 @@
 """Interactive inference for fine-tuned Qwen 3.5 tool-calling model."""
 import json, os, sys, re, argparse
 import torch
-from unsloth import FastLanguageModel
 from transformers import TextStreamer
 
 SYSTEM = "You are JBUJB assistant, a food ordering and restaurant discovery agent. Use only available tools. Never invent IDs — always resolve them through search or resolution tools. Ask for clarification when required information is missing (location, restaurant name, ambiguous results). Mutating order actions (create, add, remove, update, clear) require explicit user confirmation. Respond in the same language as the user (French, English, or Moroccan Arabic). Be concise, friendly, and helpful."
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-def load_model(checkpoint_dir: str, max_seq_length: int = 4096):
+def _normalize_tool(t: dict) -> dict | None:
+    if not isinstance(t, dict):
+        return None
+    if "function" in t and isinstance(t["function"], dict):
+        fn = t["function"]
+        return {
+            "type": t.get("type", "function"),
+            "function": {
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+                "parameters": fn.get("parameters") or {"type": "object", "properties": {}},
+            },
+        }
+    return {
+        "type": t.get("type", "function"),
+        "function": {
+            "name": t.get("name", ""),
+            "description": t.get("description", ""),
+            "parameters": t.get("parameters") or {"type": "object", "properties": {}},
+        },
+    }
+
+
+def load_model(checkpoint_dir: str, base_model: str = "unsloth/Qwen3.5-4B", max_seq_length: int = 2048):
     """Load LoRA adapter from checkpoint."""
+    try:
+        from unsloth import FastLanguageModel
+    except Exception as exc:
+        raise ModuleNotFoundError(
+            "unsloth is required to run inference; install requirements_qwen35_sft.txt first"
+        ) from exc
+
     print(f"Loading LoRA adapter from {checkpoint_dir}...")
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name="unsloth/Qwen2.5-7B-Instruct",
+    model, tokenizer_or_processor = FastLanguageModel.from_pretrained(
+        model_name=base_model,
         max_seq_length=max_seq_length,
         dtype=torch.bfloat16,
         load_in_4bit=False,
         attn_implementation="sdpa",
     )
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=32, lora_alpha=32, lora_dropout=0,
-        target_modules=["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"],
-        bias="none",
-        use_gradient_checkpointing="unsloth",
-    )
     # Load adapter weights
     from peft import PeftModel
     model = PeftModel.from_pretrained(model, checkpoint_dir)
     FastLanguageModel.for_inference(model)
+    tokenizer = getattr(tokenizer_or_processor, "tokenizer", tokenizer_or_processor)
     return model, tokenizer
 
 
@@ -35,7 +59,9 @@ def load_tools(registry_path: str = None) -> list:
     """Load tool definitions from registry."""
     if registry_path and os.path.exists(registry_path):
         with open(registry_path) as f:
-            return json.load(f)
+            data = json.load(f)
+        tools = data.get("tools", data) if isinstance(data, dict) else data
+        return [x for x in (_normalize_tool(t) for t in tools) if x]
     # Default JBUJB tools
     return [
         {"type":"function","function":{"name":"search_food","description":"Search for dishes/food items","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Search term"},"language":{"type":"string","enum":["fr","en","ar"]},"limit":{"type":"integer","default":5},"page":{"type":"integer","default":1}},"required":["query"]}}},
@@ -88,7 +114,37 @@ def parse_prediction(raw: str) -> dict | None:
     return None
 
 
-def chat(model, tokenizer, tools: list, max_new_tokens: int = 512):
+def generate_response(model, tokenizer, tools: list, messages: list[dict], max_new_tokens: int, enable_thinking: bool = False) -> tuple[str, dict | None]:
+    """Generate one assistant turn from the current conversation state."""
+    try:
+        text = tokenizer.apply_chat_template(
+            messages, tools=tools, tokenize=False,
+            add_generation_prompt=True, enable_thinking=enable_thinking,
+        )
+        inputs = tokenizer(text, return_tensors="pt")
+    except TypeError:
+        text = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True,
+            enable_thinking=enable_thinking,
+        )
+        inputs = tokenizer(text, return_tensors="pt")
+
+    inputs = inputs.to(model.device)
+    input_len = inputs["input_ids"].shape[-1] if isinstance(inputs, dict) else inputs.shape[-1]
+
+    with torch.no_grad():
+        out = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=True, temperature=0.7, top_p=0.9,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+
+    response = tokenizer.decode(out[0][input_len:], skip_special_tokens=True).strip()
+    return response, parse_prediction(response)
+
+
+def chat(model, tokenizer, tools: list, max_new_tokens: int = 512, enable_thinking: bool = False):
     """Interactive chat loop."""
     messages = [{"role": "system", "content": SYSTEM}]
     print("\n" + "="*60)
@@ -113,38 +169,16 @@ def chat(model, tokenizer, tools: list, max_new_tokens: int = 512):
         
         messages.append({"role": "user", "content": user_input})
         
-        # Format with chat template
-        try:
-            text = tokenizer.apply_chat_template(
-                messages, tools=tools, tokenize=False,
-                add_generation_prompt=True, enable_thinking=True,
-            )
-            inputs = tokenizer(text, return_tensors="pt")
-        except TypeError:
-            text = tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True,
-                enable_thinking=True,
-            )
-            inputs = tokenizer(text, return_tensors="pt")
-        
-        inputs = inputs.to(model.device)
-        input_len = inputs["input_ids"].shape[-1] if isinstance(inputs, dict) else inputs.shape[-1]
-        
         print("🤖 Assistant: ", end="", flush=True)
-        
-        with torch.no_grad():
-            out = model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=True, temperature=0.7, top_p=0.9,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-        
-        response = tokenizer.decode(out[0][input_len:], skip_special_tokens=True).strip()
+        response, pred = generate_response(
+            model,
+            tokenizer,
+            tools,
+            messages,
+            max_new_tokens=max_new_tokens,
+            enable_thinking=enable_thinking,
+        )
         print(response)
-        
-        # Parse prediction
-        pred = parse_prediction(response)
         if pred and pred.get("type") == "tool_call":
             messages.append({"role": "assistant", "content": None, "tool_calls": [{
                 "id": f"call_{len(messages)}",
@@ -175,15 +209,45 @@ def chat(model, tokenizer, tools: list, max_new_tokens: int = 512):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True, help="Path to checkpoint dir (e.g. runs/.../checkpoints/checkpoint-500)")
+    ap.add_argument("--base-model", default="unsloth/Qwen3.5-4B")
     ap.add_argument("--registry", default="data/tool_registry.json")
-    ap.add_argument("--max-seq-length", type=int, default=4096)
+    ap.add_argument("--max-seq-length", type=int, default=2048)
     ap.add_argument("--max-new-tokens", type=int, default=512)
+    ap.add_argument("--prompt", default=None, help="Noninteractive one-shot prompt for smoke testing")
+    ap.add_argument("--expect-tool", default=None, help="Fail if the parsed tool call does not use this tool name")
+    ap.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        help="Enable Qwen3.5 thinking mode in chat templates; off is the safer default for function calling.",
+    )
     args = ap.parse_args()
-    
-    model, tokenizer = load_model(args.checkpoint, args.max_seq_length)
+
+    if not os.path.isabs(args.checkpoint):
+        args.checkpoint = os.path.join(PROJECT_ROOT, args.checkpoint)
+    if args.registry and not os.path.isabs(args.registry):
+        args.registry = os.path.join(PROJECT_ROOT, args.registry)
+
+    model, tokenizer = load_model(args.checkpoint, base_model=args.base_model, max_seq_length=args.max_seq_length)
     tools = load_tools(args.registry) if os.path.exists(args.registry) else load_tools()
-    
-    chat(model, tokenizer, tools, args.max_new_tokens)
+
+    if args.prompt:
+        messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": args.prompt}]
+        response, pred = generate_response(
+            model,
+            tokenizer,
+            tools,
+            messages,
+            max_new_tokens=args.max_new_tokens,
+            enable_thinking=args.enable_thinking,
+        )
+        result = {"response": response, "prediction": pred}
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.expect_tool:
+            if not pred or pred.get("type") != "tool_call" or pred.get("name") != args.expect_tool:
+                raise SystemExit(f"Expected tool call {args.expect_tool!r}, got {pred!r}")
+        return
+
+    chat(model, tokenizer, tools, args.max_new_tokens, enable_thinking=args.enable_thinking)
 
 
 if __name__ == "__main__":

@@ -11,3 +11,5 @@ runs/*/eval/*_predictions.jsonl
 unsloth_compiled_cache/
 __pycache__/
 *.pyc
+.env
+.cache/

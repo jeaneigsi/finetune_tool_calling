@@ -182,6 +182,27 @@ dialogue
 
 This allows the dataset to remain auditable.
 
+### 1b. Dialogue rewriting with OpenRouter
+
+When you want lexical diversity without changing the tool logic, the repo can rewrite the natural-language turns with OpenRouter.
+
+The rewriter:
+
+- keeps `tool_calls` and `tool` messages unchanged
+- rewrites only natural-language content
+- carries a local memory of prior outputs so the prompts stay stateless but the run stays diverse
+- rejects outputs that are too close to the source or too similar to prior generations
+
+Default usage:
+
+```bash
+python scripts/rewrite_dialogues_openrouter.py \
+  --input data/5k/all.jsonl \
+  --output data/5k/all_rewritten_openrouter.jsonl
+```
+
+It expects `OPENROUTER_API_KEY` in `.env`, and you can override the model with `OPENROUTER_MODEL`.
+
 ---
 
 ### 2. Dataset validation
@@ -707,9 +728,9 @@ Example command:
 ```bash
 python train_qwen35_tool_sft.py \
   --model unsloth/Qwen3.5-4B \
-  --train data/train.jsonl \
-  --validation data/validation.jsonl \
-  --test data/evaluation.jsonl \
+  --train data/5k/train.jsonl \
+  --validation data/5k/validation.jsonl \
+  --test data/5k/evaluation.jsonl \
   --tool-registry data/tool_registry.json \
   --output-dir runs/qwen35_4b_tool_sft_v2 \
   --max-seq-length 2048 \
@@ -726,12 +747,15 @@ python train_qwen35_tool_sft.py \
   --clearml-project "JBUJB-Qwen35-ToolSFT"
 ```
 
+For the dedicated GPU server workflow, see [GPU_SERVER_RUNBOOK.md](/home/jean/projects/doctorat/project-5/GPU_SERVER_RUNBOOK.md).
+The end-to-end wrapper is [scripts/run_gpu_pipeline.sh](/home/jean/projects/doctorat/project-5/scripts/run_gpu_pipeline.sh).
+
 **Fast iteration (skip baseline, focus on training):**
 
 ```bash
 python train_qwen35_tool_sft.py \
-  --train data/train.jsonl \
-  --validation data/validation.jsonl \
+  --train data/5k/train.jsonl \
+  --validation data/5k/validation.jsonl \
   --tool-registry data/tool_registry.json \
   --output-dir runs/qwen35_4b_tool_sft_v2 \
   --dtype bf16 \
@@ -775,6 +799,7 @@ python train_qwen35_tool_sft.py \
 | `--report-to` | `tensorboard` | `none`, `tensorboard`, `clearml`, `wandb`, `mlflow` |
 | `--clearml-project` | `JBUJB-Qwen35-ToolSFT` | ClearML project name |
 | `--clearml-task` | `None` | ClearML task name (auto-generated if None) |
+| `--enable-thinking` | `False` | Enable Qwen3.5 thinking mode in chat templates |
 | `--seed` | `3407` | Random seed |
 
 ### Speed optimizations (no quality impact)
@@ -1199,6 +1224,7 @@ Do not train on invalid dialogues.
 .
 ├── data/
 │   ├── tool_registry.json
+│   ├── openrouter_toolweave_seed.jsonl
 │   ├── tool_graph.yaml
 │   ├── workflow_patterns.yaml
 │   └── seed_entities.yaml
@@ -1213,6 +1239,8 @@ Do not train on invalid dialogues.
 │       └── test_hard.jsonl
 │
 ├── scripts/
+│   ├── clean_dataset.py
+│   ├── generate_openrouter_dataset.py
 │   ├── validate_dataset.py
 │   ├── split_dataset.py
 │   └── check_split_leakage.py
@@ -1327,6 +1355,7 @@ Tool-calling dataset validation
 Baseline vs fine-tuned evaluation
 ClearML experiment tracking
 JBUJB food-ordering tool workflows
+OpenRouter + ToolWeave seed corpus
 ```
 
 Next priorities:

@@ -27,11 +27,6 @@ Expected JSONL row:
 
 from __future__ import annotations
 
-try:
-    from unsloth import FastModel
-except Exception:
-    from unsloth import FastLanguageModel as FastModel  # older Unsloth fallback
-
 import argparse
 import copy
 import hashlib
@@ -45,9 +40,34 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import torch
 from datasets import Dataset
-from trl import SFTConfig, SFTTrainer
+
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 
+def get_fast_model_class():
+    """Import Unsloth lazily so `--help` and static checks work without it."""
+    try:
+        from unsloth import FastModel
+        return FastModel
+    except Exception:
+        try:
+            from unsloth import FastLanguageModel
+            return FastLanguageModel
+        except Exception as exc:
+            raise ModuleNotFoundError(
+                "unsloth is required to run training; install requirements_qwen35_sft.txt first"
+            ) from exc
+
+
+def get_trl_classes():
+    """Import TRL lazily so `--help` and static checks work without it."""
+    try:
+        from trl import SFTConfig, SFTTrainer
+        return SFTConfig, SFTTrainer
+    except Exception as exc:
+        raise ModuleNotFoundError(
+            "trl is required to run training; install requirements_qwen35_sft.txt first"
+        ) from exc
 
 
 # -----------------------------
@@ -68,6 +88,15 @@ def read_jsonl(path: str | Path) -> List[dict]:
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid JSON in {path}:{line_no}: {e}") from e
     return rows
+
+
+def resolve_path(path: str | Path | None) -> Path | None:
+    if path is None:
+        return None
+    p = Path(path)
+    if p.is_absolute():
+        return p
+    return PROJECT_ROOT / p
 
 def get_text_tokenizer(processor_or_tokenizer):
     return getattr(processor_or_tokenizer, "tokenizer", processor_or_tokenizer)
@@ -137,7 +166,7 @@ def load_tool_registry(path: Optional[str]) -> List[dict]:
         return [x for x in (_normalize_tool(t) for t in tools) if x]
 
     # Markdown fallback: extract JSON code blocks or raw JSON arrays.
-    blocks = re.findall(r"```(?:json)?\\s*(.*?)```", text, flags=re.S | re.I)
+    blocks = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.S | re.I)
     candidates = blocks + [text]
     extracted: List[dict] = []
     for c in candidates:
@@ -155,21 +184,64 @@ def tool_names(tools: List[dict]) -> set[str]:
     return {t.get("function", {}).get("name", "") for t in tools if t.get("function")}
 
 
+def tool_schema_map(tools: List[dict]) -> Dict[str, dict]:
+    schemas: Dict[str, dict] = {}
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        fn = tool.get("function")
+        if isinstance(fn, dict) and fn.get("name"):
+            schemas[fn["name"]] = fn.get("parameters") or {"type": "object", "properties": {}}
+    return schemas
+
+
 # -----------------------------
 # Message normalization & formatting
 # -----------------------------
 
 
-def parse_arguments(args: Any) -> Any:
+def parse_arguments(args: Any, schema: Optional[dict] = None) -> Any:
     if isinstance(args, str):
         try:
-            return json.loads(args)
+            args = json.loads(args)
         except Exception:
             return args
+    return normalize_tool_arguments(args, schema=schema)
+
+
+def normalize_tool_arguments(args: Any, schema: Optional[dict] = None) -> Any:
+    """Normalize tool-call arguments into a canonical training/eval form."""
+    if isinstance(args, dict):
+        properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        normalized: Dict[str, Any] = {}
+        for key, value in args.items():
+            if isinstance(properties, dict):
+                if key == "qty" and "quantity" in properties and "quantity" not in args:
+                    normalized["quantity"] = normalize_tool_arguments(value, schema=properties.get("quantity"))
+                    continue
+                if key == "business_id" and "merchant_id" in properties and "merchant_id" not in args:
+                    normalized["merchant_id"] = normalize_tool_arguments(value, schema=properties.get("merchant_id"))
+                    continue
+                if key == "restaurant_name" and "name" in properties and "name" not in args:
+                    normalized["name"] = normalize_tool_arguments(value, schema=properties.get("name"))
+                    continue
+                if key == "merchant" and "merchant_id" in properties and "merchant_id" not in args:
+                    normalized["merchant_id"] = normalize_tool_arguments(value, schema=properties.get("merchant_id"))
+                    continue
+            if properties and key not in properties:
+                continue
+            normalized[key] = normalize_tool_arguments(value, schema=properties.get(key) if isinstance(properties, dict) else None)
+        # Canonicalize colloquial Moroccan Arabic labels to the schema-friendly code.
+        if normalized.get("language") == "ar_darija":
+            normalized["language"] = "ar"
+        return normalized
+    if isinstance(args, list):
+        item_schema = schema.get("items", {}) if isinstance(schema, dict) else None
+        return [normalize_tool_arguments(v, schema=item_schema) for v in args]
     return args
 
 
-def normalize_messages(messages: List[dict]) -> List[dict]:
+def normalize_messages(messages: List[dict], tool_schemas: Optional[Dict[str, dict]] = None) -> List[dict]:
     out: List[dict] = []
     id_to_name: Dict[str, str] = {}
 
@@ -192,12 +264,12 @@ def normalize_messages(messages: List[dict]) -> List[dict]:
                 if "function" in tc and isinstance(tc["function"], dict):
                     fn = dict(tc["function"])
                     name = fn.get("name", "")
-                    args = parse_arguments(fn.get("arguments", {}))
+                    args = parse_arguments(fn.get("arguments", {}), schema=(tool_schemas or {}).get(name))
                     call_id = tc.get("id") or tc.get("tool_call_id") or f"call_{idx}_{name}"
                     new_tc = {"id": call_id, "type": tc.get("type", "function"), "function": {"name": name, "arguments": args}}
                 else:
                     name = tc.get("name", "")
-                    args = parse_arguments(tc.get("arguments", {}))
+                    args = parse_arguments(tc.get("arguments", {}), schema=(tool_schemas or {}).get(name))
                     call_id = tc.get("id") or tc.get("tool_call_id") or f"call_{idx}_{name}"
                     new_tc = {"id": call_id, "type": tc.get("type", "function"), "function": {"name": name, "arguments": args}}
                 id_to_name[new_tc["id"]] = new_tc["function"]["name"]
@@ -216,8 +288,14 @@ def normalize_messages(messages: List[dict]) -> List[dict]:
     return out
 
 
-def format_row(row: dict, tokenizer: Any, tools: List[dict], max_chars: Optional[int] = None) -> dict:
-    messages = normalize_messages(row.get("messages", []))
+def format_row(
+    row: dict,
+    tokenizer: Any,
+    tools: List[dict],
+    max_chars: Optional[int] = None,
+    enable_thinking: bool = False,
+) -> dict:
+    messages = normalize_messages(row.get("messages", []), tool_schema_map(tools))
     if not messages:
         return {"text": None, "id": row.get("id")}
     try:
@@ -225,12 +303,17 @@ def format_row(row: dict, tokenizer: Any, tools: List[dict], max_chars: Optional
             messages,
             tools=tools if tools else None,
             add_generation_prompt=True,
-            enable_thinking=True,
+            enable_thinking=enable_thinking,
             tokenize=False,
         )
     except TypeError:
         # Some templates do not accept tools=None / tools=...
-        text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, enable_thinking=True, tokenize=False)
+        text = tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            enable_thinking=enable_thinking,
+            tokenize=False,
+        )
     if isinstance(text, str):
         text = text.removeprefix("<bos>")
     if max_chars and len(text) > max_chars:
@@ -238,8 +321,17 @@ def format_row(row: dict, tokenizer: Any, tools: List[dict], max_chars: Optional
     return {"text": text, "id": row.get("id"), "metadata": row.get("metadata", {})}
 
 
-def build_text_dataset(rows: List[dict], tokenizer: Any, tools: List[dict], max_chars: Optional[int]) -> Dataset:
-    formatted = [format_row(r, tokenizer, tools, max_chars=max_chars) for r in rows]
+def build_text_dataset(
+    rows: List[dict],
+    tokenizer: Any,
+    tools: List[dict],
+    max_chars: Optional[int],
+    enable_thinking: bool = False,
+) -> Dataset:
+    formatted = [
+        format_row(r, tokenizer, tools, max_chars=max_chars, enable_thinking=enable_thinking)
+        for r in rows
+    ]
     formatted = [x for x in formatted if x.get("text")]
     return Dataset.from_list(formatted)
 
@@ -268,11 +360,11 @@ def canonical_assistant(msg: dict) -> dict:
     return {"type": "assistant_message", "content": msg.get("content") or ""}
 
 
-def build_eval_cases(rows: List[dict], require_user_before_target: bool = False) -> List[dict]:
+def build_eval_cases(rows: List[dict], tool_schemas: Optional[Dict[str, dict]] = None, require_user_before_target: bool = False) -> List[dict]:
     """Create next-assistant-turn cases from full dialogues."""
     cases = []
     for row in rows:
-        messages = normalize_messages(row.get("messages", []))
+        messages = normalize_messages(row.get("messages", []), tool_schemas)
         for i, m in enumerate(messages):
             if m.get("role") != "assistant":
                 continue
@@ -396,18 +488,31 @@ def score_prediction(pred: Optional[dict], expected: dict, allowed_tools: set[st
     return s
 
 
-def generate_raw(model: Any, tokenizer: Any, messages: List[dict], tools: List[dict], max_new_tokens: int) -> str:
+def generate_raw(
+    model: Any,
+    tokenizer: Any,
+    messages: List[dict],
+    tools: List[dict],
+    max_new_tokens: int,
+    enable_thinking: bool = False,
+) -> str:
     try:
         inputs = tokenizer.apply_chat_template(
             messages,
             tools=tools if tools else None,
             tokenize=True,
             add_generation_prompt=True,
-            enable_thinking=True,
+            enable_thinking=enable_thinking,
             return_tensors="pt",
         )
     except TypeError:
-        inputs = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, enable_thinking=True, return_tensors="pt")
+        inputs = tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            enable_thinking=enable_thinking,
+            return_tensors="pt",
+        )
     if isinstance(inputs, dict):
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
         input_len = inputs["input_ids"].shape[-1]
@@ -459,8 +564,18 @@ def log_to_clearml(report: dict, prefix: str = "", step: int = 0) -> None:
         print(f"[clearml] Failed to log metrics: {e}")
 
 
-def evaluate_model(model: Any, tokenizer: Any, rows: List[dict], tools: List[dict], out_dir: Path, name: str, limit: int, max_new_tokens: int) -> dict:
-    cases = build_eval_cases(rows)
+def evaluate_model(
+    model: Any,
+    tokenizer: Any,
+    rows: List[dict],
+    tools: List[dict],
+    out_dir: Path,
+    name: str,
+    limit: int,
+    max_new_tokens: int,
+    enable_thinking: bool = False,
+) -> dict:
+    cases = build_eval_cases(rows, tool_schema_map(tools))
     if limit:
         cases = cases[:limit]
     allowed = tool_names(tools)
@@ -471,7 +586,14 @@ def evaluate_model(model: Any, tokenizer: Any, rows: List[dict], tools: List[dic
 
     for i, case in enumerate(cases, 1):
         t0 = time.time()
-        raw = generate_raw(model, tokenizer, case["messages"], tools, max_new_tokens=max_new_tokens)
+        raw = generate_raw(
+            model,
+            tokenizer,
+            case["messages"],
+            tools,
+            max_new_tokens=max_new_tokens,
+            enable_thinking=enable_thinking,
+        )
         pred = normalize_prediction(raw)
         metrics = score_prediction(pred, case["expected"], allowed)
         elapsed = time.time() - t0
@@ -556,10 +678,22 @@ def main() -> None:
     ap.add_argument("--report-to", default="tensorboard", choices=["none", "tensorboard", "clearml", "wandb", "mlflow"])
     ap.add_argument("--clearml-project", default="JBUJB-Qwen35-ToolSFT")
     ap.add_argument("--clearml-task", default=None)
+    ap.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        help="Enable Qwen3.5 thinking mode in chat templates; off is the safer default for function calling.",
+    )
     ap.add_argument("--seed", type=int, default=3407)
     args = ap.parse_args()
 
-    out_dir = Path(args.output_dir)
+    args.train = str(resolve_path(args.train))
+    args.validation = str(resolve_path(args.validation))
+    if args.test:
+        args.test = str(resolve_path(args.test))
+    if args.tool_registry:
+        args.tool_registry = str(resolve_path(args.tool_registry))
+
+    out_dir = resolve_path(args.output_dir) or PROJECT_ROOT / "runs/qwen35_tool_sft"
     eval_dir = out_dir / "eval"
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -581,6 +715,9 @@ def main() -> None:
         dtype = torch.bfloat16
     elif args.dtype == "fp16":
         dtype = torch.float16
+
+    FastModel = get_fast_model_class()
+    SFTConfig, SFTTrainer = get_trl_classes()
 
     print(f"Loading model: {args.model}")
     model, processor_or_tokenizer  = FastModel.from_pretrained(
@@ -605,6 +742,7 @@ def main() -> None:
             name="baseline_validation_raw",
             limit=args.baseline_limit,
             max_new_tokens=args.eval_max_new_tokens,
+            enable_thinking=args.enable_thinking,
         )
         if args.report_to == "clearml":
             log_to_clearml(baseline_report, prefix="baseline")
@@ -613,8 +751,20 @@ def main() -> None:
         print("Skipped baseline eval.")
 
     print("Preparing text datasets...")
-    train_ds = build_text_dataset(train_rows, tokenizer, tools, max_chars=None)
-    val_ds = build_text_dataset(val_rows, tokenizer, tools, max_chars=None)
+    train_ds = build_text_dataset(
+        train_rows,
+        tokenizer,
+        tools,
+        max_chars=None,
+        enable_thinking=args.enable_thinking,
+    )
+    val_ds = build_text_dataset(
+        val_rows,
+        tokenizer,
+        tools,
+        max_chars=None,
+        enable_thinking=args.enable_thinking,
+    )
     print(f"train examples: {len(train_ds)} | validation examples: {len(val_ds)} | tools: {len(tools)}")
 
     model = FastModel.get_peft_model(
