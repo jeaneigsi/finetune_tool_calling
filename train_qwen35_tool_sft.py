@@ -548,6 +548,7 @@ def main() -> None:
     ap.add_argument("--eval-workers", type=int, default=2, help="Num workers for eval dataset tokenization")
     ap.add_argument("--skip-baseline", action="store_true", help="Skip the baseline evaluation run")
     ap.add_argument("--attn-implementation", default="flash_attention_2", choices=["flash_attention_2", "sdpa", "eager"])
+    ap.add_argument("--no-grad-checkpoint", action="store_true", help="Disable gradient checkpointing (unsloth/fla). Use for H100 or when tilelang/fla has CUDA incompatibility")
     ap.add_argument("--export-gguf", default=None, help="Export to GGUF via unsloth (e.g. q4_k_m, q8_0, f16)")
     ap.add_argument("--export-merged", action="store_true", help="Export merged 16bit model for vLLM deployment")
     ap.add_argument("--push-to-hub", default=None, help="Push merged model to HuggingFace Hub (e.g. moncrolio/jbujb-qwen-tool-sft)")
@@ -623,7 +624,7 @@ def main() -> None:
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         bias="none",
-        use_gradient_checkpointing="unsloth",
+        use_gradient_checkpointing="unsloth" if not args.no_grad_checkpoint else False,
         random_state=args.seed,
         use_rslora=False,
         loftq_config=None,
