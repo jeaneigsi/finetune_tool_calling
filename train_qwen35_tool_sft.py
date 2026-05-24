@@ -225,11 +225,12 @@ def format_row(row: dict, tokenizer: Any, tools: List[dict], max_chars: Optional
             messages,
             tools=tools if tools else None,
             add_generation_prompt=True,
+            enable_thinking=True,
             tokenize=False,
         )
     except TypeError:
         # Some templates do not accept tools=None / tools=...
-        text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+        text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, enable_thinking=True, tokenize=False)
     if isinstance(text, str):
         text = text.removeprefix("<bos>")
     if max_chars and len(text) > max_chars:
@@ -402,10 +403,11 @@ def generate_raw(model: Any, tokenizer: Any, messages: List[dict], tools: List[d
             tools=tools if tools else None,
             tokenize=True,
             add_generation_prompt=True,
+            enable_thinking=True,
             return_tensors="pt",
         )
     except TypeError:
-        inputs = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt")
+        inputs = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, enable_thinking=True, return_tensors="pt")
     if isinstance(inputs, dict):
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
         input_len = inputs["input_ids"].shape[-1]
