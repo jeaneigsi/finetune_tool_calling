@@ -690,9 +690,20 @@ def main() -> None:
         gguf_dir.mkdir(parents=True, exist_ok=True)
         print(f"Exporting GGUF ({args.export_gguf}) to {gguf_dir}...")
         try:
-            from unsloth import save_pretrained_gguf
-            save_pretrained_gguf(str(out_dir / "merged"), tokenizer, quantization_method=args.export_gguf)
+            model.save_pretrained_gguf(
+                str(gguf_dir),
+                tokenizer,
+                quantization_method=args.export_gguf,
+            )
             print(f"GGUF exported to {gguf_dir}")
+        except AttributeError:
+            # Fallback: old unsloth API
+            try:
+                from unsloth import save_pretrained_gguf
+                save_pretrained_gguf(str(out_dir / "merged"), tokenizer, quantization_method=args.export_gguf)
+                print(f"GGUF exported to {gguf_dir}")
+            except Exception as e:
+                print(f"GGUF export failed: {e}. Try: pip install unsloth[gguf]")
         except Exception as e:
             print(f"GGUF export failed: {e}. Try: pip install unsloth[gguf]")
 
@@ -702,32 +713,49 @@ def main() -> None:
         if not token:
             print("HF push skipped: no --hf-token and HF_TOKEN not set")
         else:
-            print(f"Pushing merged model to {args.push_to_hub}...")
+            print(f"Pushing to {args.push_to_hub}...")
             try:
-                # Push LoRA adapter
-                model.push_to_hub(
-                    f"{args.push_to_hub}-lora",
-                    tokenizer=tokenizer,
-                    token=token,
-                    private=False,
-                )
-                print(f"LoRA adapter pushed to https://huggingface.co/{args.push_to_hub}-lora")
-                # Push merged model  
+                # Push LoRA adapter (no tokenizer kwarg in newer unsloth)
+                try:
+                    model.push_to_hub(
+                        f"{args.push_to_hub}-lora",
+                        token=token,
+                        private=False,
+                    )
+                except TypeError:
+                    model.push_to_hub(
+                        f"{args.push_to_hub}-lora",
+                        tokenizer=tokenizer,
+                        token=token,
+                        private=False,
+                    )
+                print(f"LoRA adapter: https://huggingface.co/{args.push_to_hub}-lora")
+
+                # Push merged model
                 model.push_to_hub_merged(
                     args.push_to_hub,
                     tokenizer,
                     token=token,
                     private=False,
                 )
-                print(f"Model pushed to https://huggingface.co/{args.push_to_hub}")
-                # Also push the GGUF if we exported one
+                print(f"Merged model: https://huggingface.co/{args.push_to_hub}")
+
+                # Push GGUF if exported
                 if args.export_gguf:
-                    model.push_to_hub_gguf(
-                        args.push_to_hub,
-                        tokenizer,
-                        quantization_method=args.export_gguf,
-                        token=token,
-                    )
+                    try:
+                        model.push_to_hub_gguf(
+                            args.push_to_hub,
+                            tokenizer,
+                            quantization_method=args.export_gguf,
+                            token=token,
+                        )
+                    except TypeError:
+                        # Older API
+                        model.push_to_hub_gguf(
+                            args.push_to_hub,
+                            quantization_method=args.export_gguf,
+                            token=token,
+                        )
                     print(f"GGUF pushed to https://huggingface.co/{args.push_to_hub}")
             except Exception as e:
                 print(f"HF push failed: {e}")
