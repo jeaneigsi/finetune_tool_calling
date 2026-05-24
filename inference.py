@@ -115,25 +115,26 @@ def chat(model, tokenizer, tools: list, max_new_tokens: int = 512):
         
         # Format with chat template
         try:
-            inputs = tokenizer.apply_chat_template(
-                messages, tools=tools, tokenize=True,
+            text = tokenizer.apply_chat_template(
+                messages, tools=tools, tokenize=False,
                 add_generation_prompt=True, enable_thinking=True,
-                return_tensors="pt",
             )
+            inputs = tokenizer(text, return_tensors="pt")
         except TypeError:
-            inputs = tokenizer.apply_chat_template(
-                messages, tokenize=True, add_generation_prompt=True,
-                enable_thinking=True, return_tensors="pt",
+            text = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True,
+                enable_thinking=True,
             )
+            inputs = tokenizer(text, return_tensors="pt")
         
-        inputs = {k: v.to(model.device) for k, v in inputs.items()} if isinstance(inputs, dict) else inputs.to(model.device)
+        inputs = inputs.to(model.device)
         input_len = inputs["input_ids"].shape[-1] if isinstance(inputs, dict) else inputs.shape[-1]
         
         print("🤖 Assistant: ", end="", flush=True)
         
         with torch.no_grad():
             out = model.generate(
-                **inputs if isinstance(inputs, dict) else {"input_ids": inputs},
+                **inputs,
                 max_new_tokens=max_new_tokens,
                 do_sample=True, temperature=0.7, top_p=0.9,
                 pad_token_id=tokenizer.eos_token_id,
