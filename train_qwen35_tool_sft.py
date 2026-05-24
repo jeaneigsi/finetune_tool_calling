@@ -646,6 +646,9 @@ def main() -> None:
     ap.add_argument("--train", required=True)
     ap.add_argument("--validation", required=True)
     ap.add_argument("--test", default=None)
+    ap.add_argument("--train-limit", type=int, default=None, help="Optional cap on the number of training rows to load")
+    ap.add_argument("--validation-limit", type=int, default=None, help="Optional cap on the number of validation rows to load")
+    ap.add_argument("--test-limit", type=int, default=None, help="Optional cap on the number of test rows to load")
     ap.add_argument("--tool-registry", default=None)
     ap.add_argument("--output-dir", default="runs/qwen35_tool_sft")
     ap.add_argument("--max-seq-length", type=int, default=2048)
@@ -709,6 +712,12 @@ def main() -> None:
     train_rows = read_jsonl(args.train)
     val_rows = read_jsonl(args.validation)
     test_rows = read_jsonl(args.test) if args.test else []
+    if args.train_limit is not None:
+        train_rows = train_rows[: args.train_limit]
+    if args.validation_limit is not None:
+        val_rows = val_rows[: args.validation_limit]
+    if args.test_limit is not None and test_rows:
+        test_rows = test_rows[: args.test_limit]
 
     dtype = None
     if args.dtype == "bf16":
